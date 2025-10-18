@@ -5,7 +5,7 @@ A modern, feature-rich chat application powered by Grok-4-fast-reasoning with a 
 ## Features ✨
 
 ### Core Features
-- 💬 **Real-time Chat** with Grok-4-fast-reasoning
+.- 💬 **Real-time Chat** with Grok-4-fast-reasoning
 - 🎭 **Editable System Prompt** - Customize Grok's personality and behavior
 - 🔀 **A/B Testing Mode** - Compare responses with different temperature settings (0.3, 0.7, 1.0)
 - 🎯 **Output Evaluation** - Use Grok to evaluate and compare different responses

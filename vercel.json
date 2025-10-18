@@ -1,0 +1,36 @@
+{
+  "version": 2,
+  "name": "grok-chat",
+  "builds": [
+    {
+      "src": "backend/server.js",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "grok-chat/package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "grok-chat/dist/grok-chat/browser"
+      }
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "backend/server.js"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "grok-chat/dist/grok-chat/browser/$1"
+    }
+  ],
+  "env": {
+    "XAI_API_KEY": "@xai_api_key",
+    "NODE_ENV": "production"
+  },
+  "build": {
+    "env": {
+      "NODE_ENV": "production"
+    }
+  }
+}

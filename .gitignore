@@ -1,14 +1,26 @@
 # Node modules
 node_modules/
+npm-debug.log
+yarn-error.log
+package-lock.json.bak
 
-# Environment variables
+# Environment variables - NEVER COMMIT THESE!
 .env
 .env.local
+.env.*.local
+.env.production
+.env.development
+backend/.env
+grok-chat/.env
+*.key
+*.pem
 
 # Build outputs
 dist/
 build/
 *.log
+.vercel
+.next
 
 # IDE
 .vscode/
@@ -16,14 +28,38 @@ build/
 *.swp
 *.swo
 *~
+*.sublime-project
+*.sublime-workspace
 
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini
+*.tmp
 
 # Angular
 grok-chat/.angular/
 grok-chat/dist/
+.angular/
 
 # Test coverage
 coverage/
+*.lcov
+.nyc_output
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+db-data/
+
+# Secrets and credentials
+secrets/
+credentials/
+*.credentials
+config/local.json
+
+# Temporary files
+tmp/
+temp/
+*.cache
