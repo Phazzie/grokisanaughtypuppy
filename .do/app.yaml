@@ -28,6 +28,8 @@ services:
       - key: DATABASE_URL
         value: ${db.DATABASE_URL}  # Auto-populated from database component
         type: SECRET
+      - key: ALLOWED_ORIGINS
+        value: ${frontend.PUBLIC_URL},https://grokisanaughtypuppy-yn23q.ondigitalocean.app
     
     # Health check
     health_check:
@@ -55,7 +57,7 @@ static_sites:
     source_dir: /grok-chat
     
     # Build command
-    build_command: npm install && npm run build -- --configuration production
+    build_command: chmod +x build.sh && ./build.sh
     
     # Output directory
     output_dir: dist/grok-chat/browser

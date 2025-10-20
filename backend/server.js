@@ -122,9 +122,27 @@ app.post('/api/chat', chatLimiter, validateChat, async (req, res) => {
   }
 });
 
-app.post('/api/evaluate', async (req, res) => {
+const validateEvaluate = [
+  body('outputs').isArray().withMessage('Outputs must be an array'),
+  body('outputs.*').isString().trim().notEmpty().withMessage('Output content required'),
+  body('criteria').optional().isString().trim().isLength({ max: 500 }),
+  body('context').optional().isString().trim().isLength({ max: 500 }),
+];
+
+app.post('/api/evaluate', chatLimiter, validateEvaluate, async (req, res) => {
   try {
+    // Check validation results
+    const errors = validationResult(req);  
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
     const { outputs, criteria, context } = req.body;
+    
+    // Additional validation
+    if (outputs.length > 5) {
+      return res.status(400).json({ error: 'Maximum 5 outputs allowed for evaluation' });
+    }
     
     const apiKey = process.env.XAI_API_KEY;
     if (!apiKey) {
@@ -182,7 +200,44 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// Error handling middleware (must be last)
+app.use((err, req, res, next) => {
+  // Log error for debugging
+  console.error('Error:', {
+    message: err.message,
+    path: req.path,
+    method: req.method,
+    timestamp: new Date().toISOString(),
+  });
+
+  // Don't expose stack traces in production
+  const isDevelopment = process.env.NODE_ENV !== 'production';
+  
+  res.status(err.status || 500).json({
+    error: isDevelopment ? err.message : 'An error occurred',
+    ...(isDevelopment && { stack: err.stack })
+  });
+});
+
+// Validate environment variables on startup
+function validateEnvironment() {
+  const required = ['XAI_API_KEY'];
+  const missing = required.filter(key => !process.env[key]);
+  
+  if (missing.length > 0) {
+    console.error('❌ Missing required environment variables:', missing.join(', '));
+    process.exit(1);
+  }
+  
+  console.log('✅ All required environment variables are set');
+}
+
+validateEnvironment();
+
 app.listen(PORT, () => {
   console.log(`Backend server running on http://localhost:${PORT}`);
-  console.log(`API Key configured: ${!!process.env.XAI_API_KEY}`);
+  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`CORS allowed origins: ${allowedOrigins.join(', ')}`);
+  console.log(`Rate limiting: ${apiLimiter.max} requests per ${apiLimiter.windowMs / 60000} minutes`);
+  console.log('✅ Security measures active: Helmet, CORS, Rate Limiting, Input Validation');
 });
