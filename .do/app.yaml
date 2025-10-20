@@ -77,11 +77,8 @@ static_sites:
 databases:
   - name: db
     engine: PG  # PostgreSQL
-    version: "14"
+    version: "15"
     production: false  # Set to true for production (starts at $15/month)
-    cluster_name: grok-chat-db
-    db_name: grok_chat
-    db_user: grok_user
 
 # Optional: Redis for caching/sessions
 # Uncomment if needed

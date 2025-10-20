@@ -2,19 +2,90 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+const { body, validationResult } = require('express-validator');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(cors());
-app.use(express.json());
+// Security: Helmet for security headers
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'"],
+      imgSrc: ["'self'", "data:", "https:"],
+    },
+  },
+  crossOriginEmbedderPolicy: false,
+}));
+
+// Security: Restrict CORS to specific origins
+const allowedOrigins = process.env.ALLOWED_ORIGINS 
+  ? process.env.ALLOWED_ORIGINS.split(',')
+  : ['http://localhost:4200', 'https://grokisanaughtypuppy-yn23q.ondigitalocean.app'];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    // Allow requests with no origin (mobile apps, Postman, etc.)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.indexOf(origin) === -1) {
+      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+      return callback(new Error(msg), false);
+    }
+    return callback(null, true);
+  },
+  credentials: true
+}));
+
+// Security: Request size limits
+app.use(express.json({ limit: '1mb' }));
+
+// Security: Rate limiting
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per windowMs
+  message: 'Too many requests from this IP, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const chatLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 20, // Limit chat requests to 20 per minute
+  message: 'Too many chat requests, please slow down.',
+});
+
+app.use('/api/', apiLimiter);
 
 // Grok API endpoint
 const GROK_API_URL = 'https://api.x.ai/v1/chat/completions';
 
-app.post('/api/chat', async (req, res) => {
+// Validation middleware
+const validateChat = [
+  body('messages').isArray().withMessage('Messages must be an array'),
+  body('messages.*.role').isIn(['user', 'assistant', 'system']).withMessage('Invalid role'),
+  body('messages.*.content').isString().trim().notEmpty().withMessage('Message content required'),
+  body('systemPrompt').optional().isString().trim().isLength({ max: 2000 }).withMessage('System prompt too long'),
+  body('temperature').optional().isFloat({ min: 0, max: 2 }).withMessage('Temperature must be 0-2'),
+];
+
+app.post('/api/chat', chatLimiter, validateChat, async (req, res) => {
   try {
+    // Check validation results
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
     const { messages, systemPrompt, temperature = 0.7 } = req.body;
+    
+    // Additional validation
+    if (messages.length > 50) {
+      return res.status(400).json({ error: 'Too many messages in conversation' });
+    }
     
     const apiKey = process.env.XAI_API_KEY;
     if (!apiKey) {
@@ -104,7 +175,11 @@ Please provide:
 });
 
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', hasApiKey: !!process.env.XAI_API_KEY });
+  res.json({ 
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    // Don't expose sensitive config details
+  });
 });
 
 app.listen(PORT, () => {
