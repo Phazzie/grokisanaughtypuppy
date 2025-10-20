@@ -128,9 +128,14 @@ export class AccessibilityService {
 
     document.body.appendChild(announcement);
 
-    setTimeout(() => {
-      document.body.removeChild(announcement);
+    const timeoutId = setTimeout(() => {
+      if (announcement.parentNode) {
+        document.body.removeChild(announcement);
+      }
     }, 1000);
+
+    // Store timeout for potential cleanup
+    (announcement as any).__timeoutId = timeoutId;
   }
 
   /**

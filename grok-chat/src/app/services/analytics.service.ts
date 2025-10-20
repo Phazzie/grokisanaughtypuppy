@@ -205,7 +205,7 @@ export class AnalyticsService {
    * Get memory usage
    */
   getMemoryUsage(): void {
-    if ('memory' in performance) {
+    if (typeof (performance as any).memory !== 'undefined') {
       const memory = (performance as any).memory;
       this.trackPerformance('memory_used', memory.usedJSHeapSize, 'bytes');
       this.trackPerformance('memory_total', memory.totalJSHeapSize, 'bytes');

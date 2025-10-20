@@ -48,7 +48,12 @@ app.use(cors({
 app.use(express.json({ limit: '1mb' }));
 
 // Security: Sanitize data against NoSQL injection and XSS
-app.use(mongoSanitize());
+app.use(mongoSanitize({
+  replaceWith: '_',
+  onSanitize: ({ req, key }) => {
+    console.warn('Sanitized input detected:', { ip: req.ip, key, timestamp: new Date().toISOString() });
+  }
+}));
 
 // Security: Detect suspicious activity
 app.use(detectSuspiciousActivity);

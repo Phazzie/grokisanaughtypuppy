@@ -60,17 +60,26 @@ function detectSuspiciousActivity(req, res, next) {
     /expression\(/gi,
   ];
 
-  const bodyStr = JSON.stringify(req.body);
-  
-  for (const pattern of suspiciousPatterns) {
-    if (pattern.test(bodyStr)) {
-      console.warn('Suspicious pattern detected in request:', {
-        ip: req.ip,
-        pattern: pattern.toString(),
-        timestamp: new Date().toISOString()
-      });
-      return res.status(400).json({ error: 'Invalid request content' });
+  try {
+    if (!req.body || typeof req.body !== 'object') {
+      return next();
     }
+
+    const bodyStr = JSON.stringify(req.body);
+    
+    for (const pattern of suspiciousPatterns) {
+      if (pattern.test(bodyStr)) {
+        console.warn('Suspicious pattern detected in request:', {
+          ip: req.ip,
+          pattern: pattern.toString(),
+          timestamp: new Date().toISOString()
+        });
+        return res.status(400).json({ error: 'Invalid request content' });
+      }
+    }
+  } catch (error) {
+    console.error('Error checking suspicious activity:', error);
+    // Allow request to proceed if checking fails
   }
 
   next();
