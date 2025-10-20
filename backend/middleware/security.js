@@ -50,14 +50,21 @@ function sanitizeResponse(data) {
 
 /**
  * Detect and block suspicious request patterns
+ * Uses simpler patterns to avoid ReDoS vulnerabilities
  */
 function detectSuspiciousActivity(req, res, next) {
-  const suspiciousPatterns = [
-    /<script[^>]*>[\s\S]*?<\/script>/gi,
-    /javascript:/gi,
-    /on\w+\s*=/gi,
-    /eval\(/gi,
-    /expression\(/gi,
+  // Simpler, safer patterns that avoid polynomial regex complexity
+  const suspiciousStrings = [
+    '<script',
+    'javascript:',
+    'onerror=',
+    'onload=',
+    'onclick=',
+    'eval(',
+    'expression(',
+    '<iframe',
+    'document.cookie',
+    'document.write'
   ];
 
   try {
@@ -65,13 +72,13 @@ function detectSuspiciousActivity(req, res, next) {
       return next();
     }
 
-    const bodyStr = JSON.stringify(req.body);
+    const bodyStr = JSON.stringify(req.body).toLowerCase();
     
-    for (const pattern of suspiciousPatterns) {
-      if (pattern.test(bodyStr)) {
+    for (const suspicious of suspiciousStrings) {
+      if (bodyStr.includes(suspicious)) {
         console.warn('Suspicious pattern detected in request:', {
           ip: req.ip,
-          pattern: pattern.toString(),
+          pattern: suspicious,
           timestamp: new Date().toISOString()
         });
         return res.status(400).json({ error: 'Invalid request content' });
