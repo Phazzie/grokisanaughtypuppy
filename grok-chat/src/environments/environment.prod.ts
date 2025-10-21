@@ -1,4 +1,4 @@
 export const environment = {
   production: true,
-  apiUrl: 'https://your-backend-url.com/api' // TODO: Update with actual production backend URL
+  apiUrl: 'https://grokisanaughtypuppy-yn23q.ondigitalocean.app/api'
 };
