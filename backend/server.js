@@ -160,6 +160,11 @@ app.post('/api/evaluate', chatLimiter, validateEvaluate, asyncHandler(async (req
 
     const { outputs, criteria, context } = req.body;
     
+    // Additional validation
+    if (outputs.length > 5) {
+      return res.status(400).json({ error: 'Maximum 5 outputs allowed for evaluation' });
+    }
+    
     const apiKey = process.env.XAI_API_KEY;
     if (!apiKey) {
       return res.status(500).json({ error: 'XAI_API_KEY not configured' });
@@ -218,13 +223,32 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+
 // 404 handler - must be after all routes
 app.use(notFoundHandler);
 
 // Global error handler - must be last
 app.use(errorHandler);
 
+// Validate environment variables on startup
+function validateEnvironment() {
+  const required = ['XAI_API_KEY'];
+  const missing = required.filter(key => !process.env[key]);
+  
+  if (missing.length > 0) {
+    console.error('❌ Missing required environment variables:', missing.join(', '));
+    process.exit(1);
+  }
+  
+  console.log('✅ All required environment variables are set');
+}
+
+validateEnvironment();
+
 app.listen(PORT, () => {
   console.log(`Backend server running on http://localhost:${PORT}`);
-  console.log(`API Key configured: ${!!process.env.XAI_API_KEY}`);
+  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`CORS allowed origins: ${allowedOrigins.join(', ')}`);
+  console.log(`Rate limiting: ${apiLimiter.max} requests per ${apiLimiter.windowMs / 60000} minutes`);
+  console.log('✅ Security measures active: Helmet, CORS, Rate Limiting, Input Validation');
 });
