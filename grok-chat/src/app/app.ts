@@ -1,10 +1,12 @@
-import { Component, signal } from '@angular/core';
+import { Component, signal, OnInit } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClientModule } from '@angular/common/http';
 import { ChatService, Message } from './services/chat.service';
 import { ToastService } from './services/toast.service';
+import { AccessibilityService } from './services/accessibility.service';
+import { AnalyticsService } from './services/analytics.service';
 import { ToastContainerComponent } from './components/toast/toast.component';
 import { InstallPromptComponent } from './components/install-prompt/install-prompt.component';
 
@@ -21,7 +23,7 @@ interface ChatBranch {
   styleUrl: './app.scss',
   standalone: true
 })
-export class App {
+export class App implements OnInit {
   protected readonly title = signal('Grok Chat');
   
   systemPrompt = 'You are Grok, a helpful, witty, and rebellious AI assistant. You provide insightful answers while maintaining a playful personality.';
@@ -49,9 +51,33 @@ export class App {
 
   constructor(
     private chatService: ChatService,
-    private toastService: ToastService
+    private toastService: ToastService,
+    private accessibilityService: AccessibilityService,
+    private analyticsService: AnalyticsService
   ) {
     this.checkApiKey();
+  }
+
+  ngOnInit() {
+    // Initialize accessibility features
+    this.accessibilityService.reducedMotionPreference.subscribe(
+      reduced => {
+        if (reduced) {
+          document.body.classList.add('reduce-motion');
+        } else {
+          document.body.classList.remove('reduce-motion');
+        }
+      }
+    );
+
+    // Initialize analytics tracking
+    this.analyticsService.getCoreWebVitals();
+    this.analyticsService.trackPageView('/', 'Grok Chat Home');
+
+    // Track memory usage every 30 seconds
+    setInterval(() => {
+      this.analyticsService.getMemoryUsage();
+    }, 30000);
   }
 
   checkApiKey() {
@@ -90,6 +116,19 @@ export class App {
   }
 
   sendSingleMessage() {
+    const startTime = Date.now();
+    const messageLength = this.currentMessage.length;
+
+    // Analytics: Track message sent
+    this.analyticsService.trackMessageSent(
+      messageLength,
+      this.temperature,
+      !!this.systemPrompt
+    );
+
+    // Accessibility: Announce to screen readers
+    this.accessibilityService.announce('Sending message to Grok', 'polite');
+
     this.toastService.info('Sending message...');
     this.chatService.sendMessage(this.messages, this.systemPrompt, this.temperature).subscribe({
       next: (response) => {
@@ -100,11 +139,30 @@ export class App {
         };
         this.messages.push(assistantMessage);
         this.isLoading = false;
+
+        // Analytics: Track response received
+        const duration = Date.now() - startTime;
+        const responseLength = response.choices[0].message.content.length;
+        this.analyticsService.trackMessageReceived(
+          responseLength,
+          duration,
+          this.temperature
+        );
+        this.analyticsService.trackAPIResponseTime('chat', duration);
+
+        // Accessibility: Announce response
+        this.accessibilityService.announce('Response received from Grok', 'polite');
       },
       error: (error) => {
         this.error = error.error?.error || 'Failed to get response';
         this.toastService.error('Failed to send message. Please try again.');
         this.isLoading = false;
+
+        // Analytics: Track error
+        this.analyticsService.trackError(error, 'sendMessage');
+
+        // Accessibility: Announce error
+        this.accessibilityService.announce('Error: Failed to send message', 'assertive');
       }
     });
   }
@@ -181,6 +239,8 @@ export class App {
   }
 
   toggleComparisonMode() {
+    const action = this.comparisonMode ? 'disable' : 'enable';
+    this.analyticsService.trackFeatureUsage('A/B Testing', action);
     this.comparisonMode = !this.comparisonMode;
     if (!this.comparisonMode) {
       this.comparisonBranches = [];
@@ -205,6 +265,8 @@ export class App {
         timestamp: new Date()
       });
       this.toastService.success('Conversation saved successfully!');
+      this.analyticsService.trackFeatureUsage('Save', 'conversation_save');
+      this.accessibilityService.announce('Conversation saved successfully', 'polite');
     }
   }
 
@@ -214,6 +276,8 @@ export class App {
     this.comparisonMode = false;
     this.comparisonBranches = [];
     this.toastService.success('Conversation loaded successfully!');
+    this.analyticsService.trackFeatureUsage('Load', 'conversation_load');
+    this.accessibilityService.announce('Conversation loaded successfully', 'polite');
   }
 
   exportConversation() {
@@ -232,6 +296,8 @@ export class App {
     link.click();
     URL.revokeObjectURL(url);
     this.toastService.success('Conversation exported successfully!');
+    this.analyticsService.trackFeatureUsage('Export', 'conversation_export');
+    this.accessibilityService.announce('Conversation exported successfully', 'polite');
   }
 
   clearChat() {
