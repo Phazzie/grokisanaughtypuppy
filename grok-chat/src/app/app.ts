@@ -4,6 +4,9 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClientModule } from '@angular/common/http';
 import { ChatService, Message } from './services/chat.service';
+import { ToastService } from './services/toast.service';
+import { ToastContainerComponent } from './components/toast/toast.component';
+import { InstallPromptComponent } from './components/install-prompt/install-prompt.component';
 
 interface ChatBranch {
   id: string;
@@ -13,7 +16,7 @@ interface ChatBranch {
 
 @Component({
   selector: 'app-root',
-  imports: [RouterOutlet, CommonModule, FormsModule, HttpClientModule],
+  imports: [RouterOutlet, CommonModule, FormsModule, HttpClientModule, ToastContainerComponent, InstallPromptComponent],
   templateUrl: './app.html',
   styleUrl: './app.scss',
   standalone: true
@@ -44,7 +47,10 @@ export class App {
   
   apiKeyConfigured = false;
 
-  constructor(private chatService: ChatService) {
+  constructor(
+    private chatService: ChatService,
+    private toastService: ToastService
+  ) {
     this.checkApiKey();
   }
 
@@ -84,6 +90,7 @@ export class App {
   }
 
   sendSingleMessage() {
+    this.toastService.info('Sending message...');
     this.chatService.sendMessage(this.messages, this.systemPrompt, this.temperature).subscribe({
       next: (response) => {
         const assistantMessage: Message = {
@@ -96,6 +103,7 @@ export class App {
       },
       error: (error) => {
         this.error = error.error?.error || 'Failed to get response';
+        this.toastService.error('Failed to send message. Please try again.');
         this.isLoading = false;
       }
     });
@@ -196,7 +204,7 @@ export class App {
         messages: [...this.messages],
         timestamp: new Date()
       });
-      alert('Conversation saved!');
+      this.toastService.success('Conversation saved successfully!');
     }
   }
 
@@ -205,6 +213,7 @@ export class App {
     this.messages = [...conversation.messages];
     this.comparisonMode = false;
     this.comparisonBranches = [];
+    this.toastService.success('Conversation loaded successfully!');
   }
 
   exportConversation() {
@@ -222,6 +231,7 @@ export class App {
     link.download = `grok-chat-${Date.now()}.json`;
     link.click();
     URL.revokeObjectURL(url);
+    this.toastService.success('Conversation exported successfully!');
   }
 
   clearChat() {
