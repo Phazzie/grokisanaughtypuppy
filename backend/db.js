@@ -221,18 +221,21 @@ async function updateConversation(conversationId, userId, updates) {
       values.push(updates.systemPrompt);
     }
 
+    if (setClause.length === 0) {
+      throw new Error('No fields to update');
+    }
+
     setClause.push(`updated_at = CURRENT_TIMESTAMP`);
 
     values.push(conversationId);
     values.push(userId);
 
-    const result = await pool.query(
-      `UPDATE conversations 
+    const query = `UPDATE conversations 
        SET ${setClause.join(', ')} 
        WHERE id = $${paramCounter++} AND user_id = $${paramCounter++}
-       RETURNING *`,
-      values
-    );
+       RETURNING *`;
+
+    const result = await pool.query(query, values);
 
     return result.rows[0] || null;
   } catch (error) {

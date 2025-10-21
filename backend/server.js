@@ -5,6 +5,10 @@ const axios = require('axios');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const { body, validationResult } = require('express-validator');
+const mongoSanitize = require('express-mongo-sanitize');
+const crypto = require('crypto');
+const { detectSuspiciousActivity, securityHeaders, sanitizeResponse } = require('./middleware/security');
+const { errorHandler, notFoundHandler, asyncHandler } = require('./middleware/errorHandler');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -43,6 +47,20 @@ app.use(cors({
 // Security: Request size limits
 app.use(express.json({ limit: '1mb' }));
 
+// Security: Sanitize data against NoSQL injection and XSS
+app.use(mongoSanitize({
+  replaceWith: '_',
+  onSanitize: ({ req, key }) => {
+    console.warn('Sanitized input detected:', { ip: req.ip, key, timestamp: new Date().toISOString() });
+  }
+}));
+
+// Security: Detect suspicious activity
+app.use(detectSuspiciousActivity);
+
+// Security: Add security-focused HTTP headers
+app.use(securityHeaders);
+
 // Security: Rate limiting
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -68,11 +86,21 @@ const validateChat = [
   body('messages').isArray().withMessage('Messages must be an array'),
   body('messages.*.role').isIn(['user', 'assistant', 'system']).withMessage('Invalid role'),
   body('messages.*.content').isString().trim().notEmpty().withMessage('Message content required'),
+  body('messages.*.content').isLength({ max: 10000 }).withMessage('Message content too long'),
   body('systemPrompt').optional().isString().trim().isLength({ max: 2000 }).withMessage('System prompt too long'),
   body('temperature').optional().isFloat({ min: 0, max: 2 }).withMessage('Temperature must be 0-2'),
 ];
 
-app.post('/api/chat', chatLimiter, validateChat, async (req, res) => {
+const validateEvaluate = [
+  body('outputs').isArray().withMessage('Outputs must be an array'),
+  body('outputs').isLength({ min: 1, max: 10 }).withMessage('Outputs must contain 1-10 items'),
+  body('outputs.*').isString().trim().notEmpty().withMessage('Output content required'),
+  body('outputs.*').isLength({ max: 10000 }).withMessage('Output content too long'),
+  body('criteria').optional().isString().trim().isLength({ max: 1000 }).withMessage('Criteria too long'),
+  body('context').optional().isString().trim().isLength({ max: 5000 }).withMessage('Context too long'),
+];
+
+app.post('/api/chat', chatLimiter, validateChat, asyncHandler(async (req, res) => {
   try {
     // Check validation results
     const errors = validationResult(req);
@@ -120,19 +148,12 @@ app.post('/api/chat', chatLimiter, validateChat, async (req, res) => {
       error: error.response?.data?.error?.message || 'Failed to get response from Grok' 
     });
   }
-});
+}));
 
-const validateEvaluate = [
-  body('outputs').isArray().withMessage('Outputs must be an array'),
-  body('outputs.*').isString().trim().notEmpty().withMessage('Output content required'),
-  body('criteria').optional().isString().trim().isLength({ max: 500 }),
-  body('context').optional().isString().trim().isLength({ max: 500 }),
-];
-
-app.post('/api/evaluate', chatLimiter, validateEvaluate, async (req, res) => {
+app.post('/api/evaluate', chatLimiter, validateEvaluate, asyncHandler(async (req, res) => {
   try {
     // Check validation results
-    const errors = validationResult(req);  
+    const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({ errors: errors.array() });
     }
@@ -190,34 +211,24 @@ Please provide:
       error: error.response?.data?.error?.message || 'Failed to evaluate outputs' 
     });
   }
-});
+}));
 
 app.get('/api/health', (req, res) => {
+  const apiKey = process.env.XAI_API_KEY;
   res.json({ 
     status: 'ok',
     timestamp: new Date().toISOString(),
+    hasApiKey: !!apiKey,
     // Don't expose sensitive config details
   });
 });
 
-// Error handling middleware (must be last)
-app.use((err, req, res, next) => {
-  // Log error for debugging
-  console.error('Error:', {
-    message: err.message,
-    path: req.path,
-    method: req.method,
-    timestamp: new Date().toISOString(),
-  });
 
-  // Don't expose stack traces in production
-  const isDevelopment = process.env.NODE_ENV !== 'production';
-  
-  res.status(err.status || 500).json({
-    error: isDevelopment ? err.message : 'An error occurred',
-    ...(isDevelopment && { stack: err.stack })
-  });
-});
+// 404 handler - must be after all routes
+app.use(notFoundHandler);
+
+// Global error handler - must be last
+app.use(errorHandler);
 
 // Validate environment variables on startup
 function validateEnvironment() {
