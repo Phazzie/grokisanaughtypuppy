@@ -7,8 +7,10 @@ import { ChatService, Message } from './services/chat.service';
 import { ToastService } from './services/toast.service';
 import { AccessibilityService } from './services/accessibility.service';
 import { AnalyticsService } from './services/analytics.service';
+import { ConversationBranchService, ConversationBranch, ConversationNode } from './services/conversation-branch.service';
 import { ToastContainerComponent } from './components/toast/toast.component';
 import { InstallPromptComponent } from './components/install-prompt/install-prompt.component';
+import { BranchTreeComponent } from './components/branch-tree/branch-tree.component';
 
 interface ChatBranch {
   id: string;
@@ -18,7 +20,7 @@ interface ChatBranch {
 
 @Component({
   selector: 'app-root',
-  imports: [RouterOutlet, CommonModule, FormsModule, HttpClientModule, ToastContainerComponent, InstallPromptComponent],
+  imports: [RouterOutlet, CommonModule, FormsModule, HttpClientModule, ToastContainerComponent, InstallPromptComponent, BranchTreeComponent],
   templateUrl: './app.html',
   styleUrl: './app.scss',
   standalone: true
@@ -41,6 +43,13 @@ export class App implements OnInit {
   showThinking = true;
   chatHistory: { name: string; messages: Message[]; timestamp: Date }[] = [];
   
+  // Conversation Branching
+  enableBranching = false;
+  currentBranch?: ConversationBranch;
+  nodePath: ConversationNode[] = [];
+  canGoBack = false;
+  canGoForward = false;
+  
   // Evaluation
   showEvaluation = false;
   evaluationResult = '';
@@ -53,7 +62,8 @@ export class App implements OnInit {
     private chatService: ChatService,
     private toastService: ToastService,
     private accessibilityService: AccessibilityService,
-    private analyticsService: AnalyticsService
+    private analyticsService: AnalyticsService,
+    private branchService: ConversationBranchService
   ) {
     this.checkApiKey();
   }
@@ -306,7 +316,183 @@ export class App implements OnInit {
       this.comparisonBranches = [];
       this.comparisonMode = false;
       this.error = '';
+      
+      // Clear branching state
+      if (this.enableBranching) {
+        this.currentBranch = undefined;
+        this.nodePath = [];
+        this.updateBranchingState();
+      }
     }
   }
+
+  // ============================================================
+  // CONVERSATION BRANCHING METHODS
+  // ============================================================
+
+  /**
+   * Toggle conversation branching mode
+   */
+  toggleBranching() {
+    this.enableBranching = !this.enableBranching;
+    
+    if (this.enableBranching && !this.currentBranch) {
+      // Initialize branching with current conversation
+      this.initializeBranching();
+      this.toastService.success('Conversation branching enabled! 🌳');
+      this.accessibilityService.announce('Conversation branching enabled', 'polite');
+    } else if (!this.enableBranching) {
+      this.toastService.info('Branching disabled. Using linear mode.');
+    }
+    
+    this.analyticsService.trackFeatureUsage('Branching', this.enableBranching ? 'enable' : 'disable');
+  }
+
+  /**
+   * Initialize branching with current conversation
+   */
+  private initializeBranching() {
+    this.currentBranch = this.branchService.createBranch(
+      'Main Branch',
+      this.systemPrompt,
+      this.temperature
+    );
+
+    // Add existing messages to the branch
+    if (this.messages.length > 0) {
+      let parentNodeId = this.currentBranch.rootNodeId;
+      
+      for (const message of this.messages) {
+        const node = this.branchService.addMessage(
+          this.currentBranch.id,
+          message,
+          parentNodeId,
+          { temperature: this.temperature, systemPrompt: this.systemPrompt }
+        );
+        if (node) {
+          parentNodeId = node.id;
+        }
+      }
+    }
+
+    this.updateBranchingState();
+  }
+
+  /**
+   * Update branching state (node path, navigation)
+   */
+  private updateBranchingState() {
+    if (!this.currentBranch) return;
+
+    const branch = this.branchService.getConversationTree(this.currentBranch.id);
+    if (branch) {
+      this.nodePath = this.getNodePathArray(branch, this.currentBranch.currentNodeId);
+    }
+
+    // Update navigation state
+    this.canGoBack = this.branchService['historyIndex'] > 0;
+    this.canGoForward = this.branchService['historyIndex'] < this.branchService['history'].length - 1;
+  }
+
+  /**
+   * Get node path as array
+   */
+  private getNodePathArray(rootNode: ConversationNode, targetNodeId: string): ConversationNode[] {
+    const path: ConversationNode[] = [];
+    this.findNodePath(rootNode, targetNodeId, path);
+    return path;
+  }
+
+  /**
+   * Recursively find path to node
+   */
+  private findNodePath(node: ConversationNode, targetId: string, path: ConversationNode[]): boolean {
+    path.push(node);
+    
+    if (node.id === targetId) {
+      return true;
+    }
+
+    for (const childId of node.children) {
+      const childNode = this.currentBranch?.nodes.get(childId);
+      if (childNode && this.findNodePath(childNode, targetId, path)) {
+        return true;
+      }
+    }
+
+    path.pop();
+    return false;
+  }
+
+  /**
+   * Navigate back in conversation history
+   */
+  onGoBack() {
+    if (this.branchService.goBack()) {
+      this.syncMessagesFromBranch();
+      this.toastService.info('Navigated back in conversation');
+      this.accessibilityService.announce('Navigated back in conversation history', 'polite');
+    }
+  }
+
+  /**
+   * Navigate forward in conversation history
+   */
+  onGoForward() {
+    if (this.branchService.goForward()) {
+      this.syncMessagesFromBranch();
+      this.toastService.info('Navigated forward in conversation');
+      this.accessibilityService.announce('Navigated forward in conversation history', 'polite');
+    }
+  }
+
+  /**
+   * Fork conversation at current point
+   */
+  onFork() {
+    if (!this.currentBranch) return;
+
+    const branchName = prompt('Enter name for new branch:', `Branch ${Date.now()}`);
+    if (!branchName) return;
+
+    const newBranch = this.branchService.forkConversation(
+      this.currentBranch.id,
+      this.currentBranch.currentNodeId,
+      branchName
+    );
+
+    if (newBranch) {
+      this.currentBranch = newBranch;
+      this.updateBranchingState();
+      this.toastService.success(`Forked to "${branchName}" 🔀`);
+      this.accessibilityService.announce(`Conversation forked to ${branchName}`, 'polite');
+      this.analyticsService.trackFeatureUsage('Branching', 'fork_conversation');
+    }
+  }
+
+  /**
+   * Navigate to a specific node
+   */
+  onNodeClick(node: ConversationNode) {
+    if (!this.currentBranch) return;
+
+    if (this.branchService.timeTravel(this.currentBranch.id, node.id)) {
+      this.syncMessagesFromBranch();
+      this.toastService.info('Jumped to selected message');
+      this.accessibilityService.announce('Jumped to selected message in history', 'polite');
+    }
+  }
+
+  /**
+   * Sync messages from branch to UI
+   */
+  private syncMessagesFromBranch() {
+    if (!this.currentBranch) return;
+
+    const linearMessages = this.branchService.getMessagesLinear(this.currentBranch.id);
+    this.messages = linearMessages.filter(m => m.role !== 'system'); // Exclude system prompt from display
+    this.updateBranchingState();
+  }
 }
+
 
