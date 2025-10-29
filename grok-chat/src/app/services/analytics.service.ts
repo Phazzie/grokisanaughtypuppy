@@ -173,8 +173,8 @@ export class AnalyticsService {
     // Largest Contentful Paint (LCP)
     const lcpObserver = new PerformanceObserver((list) => {
       const entries = list.getEntries();
-      const lastEntry = entries[entries.length - 1] as any;
-      this.trackPerformance('lcp', lastEntry.renderTime || lastEntry.loadTime, 'ms');
+      const lastEntry = entries[entries.length - 1] as PerformanceEntry & { renderTime?: number; loadTime?: number };
+      this.trackPerformance('lcp', lastEntry.renderTime || lastEntry.loadTime || 0, 'ms');
     });
     lcpObserver.observe({ entryTypes: ['largest-contentful-paint'] });
 
