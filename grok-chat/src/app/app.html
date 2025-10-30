@@ -1,10 +1,13 @@
+<!-- Skip to main content for accessibility -->
+<a href="#main-content" class="skip-link">Skip to main content</a>
+
 <div class="min-h-screen p-4 sm:p-8">
   <!-- Header -->
   <header class="max-w-7xl mx-auto mb-8 animate-fade-in">
     <div class="glass-effect rounded-3xl p-6 glow-effect">
       <div class="flex items-center justify-between flex-wrap gap-4">
         <div class="flex items-center gap-4">
-          <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-grok-purple to-grok-pink flex items-center justify-center text-3xl font-bold shadow-lg">
+          <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-grok-purple to-grok-pink flex items-center justify-center text-3xl font-bold shadow-lg" role="img" aria-label="Grok Chat logo">
             🐕
           </div>
           <div>
@@ -15,11 +18,13 @@
           </div>
         </div>
         
-        <div class="flex gap-2 flex-wrap">
+        <div class="flex gap-2 flex-wrap" role="toolbar" aria-label="Chat controls">
           <button
             (click)="showSystemPrompt = !showSystemPrompt"
             class="px-4 py-2 rounded-xl glass-effect hover:bg-white/10 transition-all duration-300 text-sm font-medium"
             [class.bg-grok-purple/30]="showSystemPrompt"
+            [attr.aria-pressed]="showSystemPrompt"
+            aria-label="Toggle system prompt settings"
           >
             ⚙️ System Prompt
           </button>
@@ -28,14 +33,28 @@
             (click)="toggleComparisonMode()"
             class="px-4 py-2 rounded-xl glass-effect hover:bg-white/10 transition-all duration-300 text-sm font-medium"
             [class.bg-grok-blue/30]="comparisonMode"
+            [attr.aria-pressed]="comparisonMode"
+            aria-label="Toggle A/B testing mode"
           >
             🔀 A/B Test
+          </button>
+          
+          <button
+            (click)="toggleBranching()"
+            class="px-4 py-2 rounded-xl glass-effect hover:bg-white/10 transition-all duration-300 text-sm font-medium"
+            [class.bg-green-500/30]="enableBranching"
+            [attr.aria-pressed]="enableBranching"
+            aria-label="Toggle conversation branching mode"
+            title="Git-like conversation branching"
+          >
+            🌳 Branch
           </button>
           
           <button
             (click)="saveConversation()"
             class="px-4 py-2 rounded-xl glass-effect hover:bg-white/10 transition-all duration-300 text-sm font-medium"
             [disabled]="messages.length === 0"
+            aria-label="Save current conversation"
           >
             💾 Save
           </button>
@@ -44,6 +63,7 @@
             (click)="exportConversation()"
             class="px-4 py-2 rounded-xl glass-effect hover:bg-white/10 transition-all duration-300 text-sm font-medium"
             [disabled]="messages.length === 0"
+            aria-label="Export conversation as JSON"
           >
             📥 Export
           </button>
@@ -51,6 +71,7 @@
           <button
             (click)="clearChat()"
             class="px-4 py-2 rounded-xl glass-effect hover:bg-red-500/20 transition-all duration-300 text-sm font-medium"
+            aria-label="Clear all messages"
           >
             🗑️ Clear
           </button>
@@ -58,11 +79,13 @@
       </div>
       
       <!-- Status Indicator -->
-      <div class="mt-4 flex items-center gap-2">
+      <div class="mt-4 flex items-center gap-2" role="status" aria-live="polite">
         <div 
           class="w-3 h-3 rounded-full animate-pulse"
           [class.bg-green-400]="apiKeyConfigured"
           [class.bg-red-400]="!apiKeyConfigured"
+          role="img"
+          [attr.aria-label]="apiKeyConfigured ? 'Connected to backend' : 'Not connected to backend'"
         ></div>
         <span class="text-sm" [class.text-green-400]="apiKeyConfigured" [class.text-red-400]="!apiKeyConfigured">
           {{ apiKeyConfigured ? 'Connected' : 'Not Connected' }}
@@ -72,10 +95,10 @@
   </header>
 
   <!-- Error Display -->
-  <div *ngIf="error" class="max-w-7xl mx-auto mb-4 animate-slide-in">
+  <div *ngIf="error" class="max-w-7xl mx-auto mb-4 animate-slide-in" role="alert" aria-live="assertive">
     <div class="bg-red-500/10 border border-red-500/30 rounded-2xl p-4 backdrop-blur-xl">
       <div class="flex items-start gap-3">
-        <span class="text-2xl">⚠️</span>
+        <span class="text-2xl" aria-hidden="true">⚠️</span>
         <div class="flex-1">
           <h3 class="font-semibold text-red-400">Error</h3>
           <p class="text-red-300 text-sm mt-1">{{ error }}</p>
@@ -83,6 +106,20 @@
         <button (click)="error = ''" class="text-red-400 hover:text-red-300">✕</button>
       </div>
     </div>
+  </div>
+
+  <!-- Branching Visualization -->
+  <div *ngIf="enableBranching && currentBranch" class="max-w-7xl mx-auto mb-4">
+    <app-branch-tree
+      [branch]="currentBranch"
+      [nodePath]="nodePath"
+      [canGoBack]="canGoBack"
+      [canGoForward]="canGoForward"
+      (goBack)="onGoBack()"
+      (goForward)="onGoForward()"
+      (fork)="onFork()"
+      (nodeClick)="onNodeClick($event)">
+    </app-branch-tree>
   </div>
 
   <!-- System Prompt Editor -->
@@ -115,74 +152,88 @@
 
   <div class="max-w-7xl mx-auto">
     <!-- Main Content -->
-    <div class="grid gap-4" [class.lg:grid-cols-2]="comparisonMode && comparisonBranches.length > 0">
-      
-      <!-- Regular Chat or First Comparison -->
-      <div class="glass-effect rounded-3xl overflow-hidden flex flex-col" [style.height.px]="600">
+    <main id="main-content" tabindex="-1" role="main" aria-label="Chat conversation">
+      <div class="grid gap-4" [class.lg:grid-cols-2]="comparisonMode && comparisonBranches.length > 0">
         
-        <!-- Messages Container -->
-        <div class="flex-1 overflow-y-auto p-6 space-y-4 scrollbar-thin scrollbar-thumb-purple-500/50 scrollbar-track-transparent">
+        <!-- Regular Chat or First Comparison -->
+        <div class="glass-effect rounded-3xl overflow-hidden flex flex-col" [style.height.px]="600">
           
-          <div *ngFor="let message of comparisonMode && comparisonBranches.length > 0 ? comparisonBranches[0].messages : messages" 
-               class="animate-slide-in"
-               [class.flex]="message.role !== 'system'"
-               [class.justify-end]="message.role === 'user'">
+          <!-- Messages Container -->
+          <div class="flex-1 overflow-y-auto p-6 space-y-4 scrollbar-thin scrollbar-thumb-purple-500/50 scrollbar-track-transparent" 
+               role="log" 
+               aria-live="polite" 
+               aria-label="Chat messages">
             
-            <div *ngIf="message.role === 'user'" class="max-w-[80%]">
-              <div class="bg-gradient-to-r from-grok-purple to-grok-pink rounded-2xl rounded-tr-sm p-4 shadow-lg">
-                <p class="text-white whitespace-pre-wrap">{{ message.content }}</p>
-                <span class="text-xs text-white/60 mt-2 block">{{ message.timestamp | date:'short' }}</span>
+            <div *ngFor="let message of comparisonMode && comparisonBranches.length > 0 ? comparisonBranches[0].messages : messages" 
+                 class="animate-slide-in"
+                 [class.flex]="message.role !== 'system'"
+                 [class.justify-end]="message.role === 'user'">
+              
+              <div *ngIf="message.role === 'user'" class="max-w-[80%]">
+                <div class="bg-gradient-to-r from-grok-purple to-grok-pink rounded-2xl rounded-tr-sm p-4 shadow-lg" role="article" aria-label="Your message">
+                  <p class="text-white whitespace-pre-wrap">{{ message.content }}</p>
+                  <span class="text-xs text-white/60 mt-2 block">{{ message.timestamp | date:'short' }}</span>
+                </div>
+              </div>
+              
+              <div *ngIf="message.role === 'assistant'" class="max-w-[80%]">
+                <div class="bg-white/5 border border-white/10 rounded-2xl rounded-tl-sm p-4 shadow-lg backdrop-blur-sm" role="article" aria-label="Grok's response">
+                  <p class="text-gray-100 whitespace-pre-wrap">{{ message.content }}</p>
+                  <span class="text-xs text-gray-500 mt-2 block">{{ message.timestamp | date:'short' }}</span>
+                </div>
               </div>
             </div>
             
-            <div *ngIf="message.role === 'assistant'" class="max-w-[80%]">
-              <div class="bg-white/5 border border-white/10 rounded-2xl rounded-tl-sm p-4 shadow-lg backdrop-blur-sm">
-                <p class="text-gray-100 whitespace-pre-wrap">{{ message.content }}</p>
-                <span class="text-xs text-gray-500 mt-2 block">{{ message.timestamp | date:'short' }}</span>
+            <div *ngIf="isLoading && !comparisonMode" class="flex justify-start animate-pulse" role="status" aria-live="polite" aria-label="Loading response">
+              <div class="bg-white/5 border border-white/10 rounded-2xl rounded-tl-sm p-4 max-w-[80%]">
+                <div class="flex gap-2">
+                  <div class="w-3 h-3 bg-grok-purple rounded-full animate-bounce" style="animation-delay: 0ms" aria-hidden="true"></div>
+                  <div class="w-3 h-3 bg-grok-purple rounded-full animate-bounce" style="animation-delay: 150ms" aria-hidden="true"></div>
+                  <div class="w-3 h-3 bg-grok-purple rounded-full animate-bounce" style="animation-delay: 300ms" aria-hidden="true"></div>
+                </div>
+                <span class="sr-only">Grok is thinking...</span>
               </div>
             </div>
           </div>
           
-          <div *ngIf="isLoading && !comparisonMode" class="flex justify-start animate-pulse">
-            <div class="bg-white/5 border border-white/10 rounded-2xl rounded-tl-sm p-4 max-w-[80%]">
-              <div class="flex gap-2">
-                <div class="w-3 h-3 bg-grok-purple rounded-full animate-bounce" style="animation-delay: 0ms"></div>
-                <div class="w-3 h-3 bg-grok-purple rounded-full animate-bounce" style="animation-delay: 150ms"></div>
-                <div class="w-3 h-3 bg-grok-purple rounded-full animate-bounce" style="animation-delay: 300ms"></div>
-              </div>
-            </div>
+          <!-- Input Area -->
+          <div class="border-t border-white/10 p-4 bg-black/20">
+            <form (submit)="$event.preventDefault(); sendMessage()" class="flex gap-2">
+              <label for="message-input" class="sr-only">Enter your message to Grok</label>
+              <input
+                id="message-input"
+                type="text"
+                [(ngModel)]="currentMessage"
+                name="messageInput"
+                (keyup.enter)="sendMessage()"
+                placeholder="Ask Grok anything..."
+                class="flex-1 bg-white/5 rounded-xl px-4 py-3 border border-white/10 focus:border-grok-purple focus:outline-none transition-all"
+                [disabled]="isLoading"
+                aria-label="Message input"
+              />
+              <button
+                type="submit"
+                (click)="sendMessage()"
+                [disabled]="!currentMessage.trim() || isLoading"
+                class="px-6 py-3 bg-gradient-to-r from-grok-purple to-grok-pink rounded-xl font-semibold hover:shadow-lg hover:shadow-purple-500/50 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                aria-label="Send message to Grok"
+              >
+                {{ isLoading ? '⏳' : '🚀' }}
+                <span class="sr-only">{{ isLoading ? 'Sending...' : 'Send message' }}</span>
+              </button>
+              <button
+                type="button"
+                (click)="regenerateResponse()"
+                [disabled]="messages.length < 2 || isLoading"
+                class="px-4 py-3 glass-effect rounded-xl hover:bg-white/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Regenerate last response"
+                aria-label="Regenerate last response"
+              >
+                🔄
+              </button>
+            </form>
           </div>
         </div>
-        
-        <!-- Input Area -->
-        <div class="border-t border-white/10 p-4 bg-black/20">
-          <div class="flex gap-2">
-            <input
-              type="text"
-              [(ngModel)]="currentMessage"
-              (keyup.enter)="sendMessage()"
-              placeholder="Ask Grok anything..."
-              class="flex-1 bg-white/5 rounded-xl px-4 py-3 border border-white/10 focus:border-grok-purple focus:outline-none transition-all"
-              [disabled]="isLoading"
-            />
-            <button
-              (click)="sendMessage()"
-              [disabled]="!currentMessage.trim() || isLoading"
-              class="px-6 py-3 bg-gradient-to-r from-grok-purple to-grok-pink rounded-xl font-semibold hover:shadow-lg hover:shadow-purple-500/50 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {{ isLoading ? '⏳' : '🚀' }}
-            </button>
-            <button
-              (click)="regenerateResponse()"
-              [disabled]="messages.length < 2 || isLoading"
-              class="px-4 py-3 glass-effect rounded-xl hover:bg-white/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-              title="Regenerate last response"
-            >
-              🔄
-            </button>
-          </div>
-        </div>
-      </div>
       
       <!-- Comparison Branches -->
       <div *ngIf="comparisonMode && comparisonBranches.length > 1" class="space-y-4">
@@ -249,24 +300,29 @@
     <div *ngIf="chatHistory.length > 0" class="mt-8">
       <div class="glass-effect rounded-2xl p-6">
         <h3 class="text-xl font-bold mb-4 flex items-center gap-2">
-          <span>📚</span> Saved Conversations
+          <span role="img" aria-label="Saved conversations icon">📚</span> Saved Conversations
         </h3>
         <div class="grid gap-2">
           <button
             *ngFor="let conv of chatHistory; let i = index"
             (click)="loadConversation(i)"
             class="flex items-center justify-between p-3 bg-white/5 rounded-xl hover:bg-white/10 transition-all text-left"
+            [attr.aria-label]="'Load conversation: ' + conv.name + ', ' + conv.messages.length + ' messages'"
           >
             <div>
               <div class="font-semibold">{{ conv.name }}</div>
               <div class="text-xs text-gray-400">{{ conv.messages.length }} messages • {{ conv.timestamp | date:'short' }}</div>
             </div>
-            <span class="text-2xl">💬</span>
+            <span class="text-2xl" aria-hidden="true">💬</span>
           </button>
         </div>
       </div>
     </div>
-  </div>
+  </main>
 </div>
+</div>
+
+<app-toast-container></app-toast-container>
+<app-install-prompt></app-install-prompt>
 
 <router-outlet />
