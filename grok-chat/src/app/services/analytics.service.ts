@@ -173,8 +173,8 @@ export class AnalyticsService {
     // Largest Contentful Paint (LCP)
     const lcpObserver = new PerformanceObserver((list) => {
       const entries = list.getEntries();
-      const lastEntry = entries[entries.length - 1];
-      this.trackPerformance('lcp', lastEntry.renderTime || lastEntry.loadTime, 'ms');
+      const lastEntry = entries[entries.length - 1] as PerformanceEntry & { renderTime?: number; loadTime?: number };
+      this.trackPerformance('lcp', lastEntry.renderTime || lastEntry.loadTime || 0, 'ms');
     });
     lcpObserver.observe({ entryTypes: ['largest-contentful-paint'] });
 
@@ -266,12 +266,12 @@ export class AnalyticsService {
 
   private getMostUsedTemperature(): number {
     const events = this.events$.value.filter(
-      e => e.category === 'conversation' && e.metadata?.temperature
+      e => e.category === 'conversation' && e.metadata?.['temperature']
     );
     
     if (events.length === 0) return 0.7;
 
-    const temps = events.map(e => e.metadata!.temperature);
+    const temps = events.map(e => e.metadata!['temperature']);
     const tempCounts = temps.reduce((acc, temp) => {
       acc[temp] = (acc[temp] || 0) + 1;
       return acc;
@@ -279,7 +279,7 @@ export class AnalyticsService {
 
     return parseFloat(
       Object.entries(tempCounts)
-        .sort(([, a], [, b]) => b - a)[0][0]
+        .sort(([, a], [, b]) => (b as number) - (a as number))[0][0]
     );
   }
 
@@ -302,7 +302,7 @@ export class AnalyticsService {
     }, {} as Record<string, number>);
 
     return Object.entries(wordCounts)
-      .sort(([, a], [, b]) => b - a)
+      .sort(([, a], [, b]) => (b as number) - (a as number))
       .slice(0, 5)
       .map(([word]) => word);
   }
