@@ -4,6 +4,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClientModule } from '@angular/common/http';
 import { ChatService, Message } from './services/chat.service';
+import { ConversationLibraryComponent } from './conversation-library/conversation-library.component';
 
 interface ChatBranch {
   id: string;
@@ -13,20 +14,23 @@ interface ChatBranch {
 
 @Component({
   selector: 'app-root',
-  imports: [RouterOutlet, CommonModule, FormsModule, HttpClientModule],
+  imports: [RouterOutlet, CommonModule, FormsModule, HttpClientModule, ConversationLibraryComponent],
   templateUrl: './app.html',
   styleUrl: './app.scss',
   standalone: true
 })
 export class App {
   protected readonly title = signal('Grok Chat');
-  
+
+  // View mode: 'chat' or 'library'
+  viewMode: 'chat' | 'library' = 'chat';
+
   systemPrompt = 'You are Grok, a helpful, witty, and rebellious AI assistant. You provide insightful answers while maintaining a playful personality.';
   messages: Message[] = [];
   currentMessage = '';
   isLoading = false;
   error = '';
-  
+
   // Advanced features
   showSystemPrompt = false;
   comparisonMode = false;
@@ -35,17 +39,40 @@ export class App {
   temperature = 0.7;
   showThinking = true;
   chatHistory: { name: string; messages: Message[]; timestamp: Date }[] = [];
-  
+
   // Evaluation
   showEvaluation = false;
   evaluationResult = '';
   evaluationLoading = false;
   evaluationCriteria = 'Quality, accuracy, helpfulness, creativity, and clarity';
-  
+
   apiKeyConfigured = false;
+  testingApi = false;
+  testJoke = '';
 
   constructor(private chatService: ChatService) {
     this.checkApiKey();
+  }
+
+  switchView(mode: 'chat' | 'library') {
+    this.viewMode = mode;
+  }
+
+  testApi() {
+    this.testingApi = true;
+    this.testJoke = '';
+    this.error = '';
+
+    this.chatService.testApiWithJoke().subscribe({
+      next: (response) => {
+        this.testJoke = response.choices[0].message.content;
+        this.testingApi = false;
+      },
+      error: (err) => {
+        this.error = 'API test failed: ' + (err.error?.error || 'Please check your API key configuration');
+        this.testingApi = false;
+      }
+    });
   }
 
   checkApiKey() {
