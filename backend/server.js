@@ -19,6 +19,8 @@ const { errorHandler, notFoundHandler, asyncHandler } = require('./middleware/er
 const db = require('./db');
 const { parseChatGPTExport, validateConversation } = require('./conversationParser');
 const { analyzeConversation, categorizeTopics, generateInsights } = require('./analysisService');
+const swaggerUi = require('swagger-ui-express');
+const swaggerSpec = require('./swagger');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -193,7 +195,41 @@ const validateEvaluate = [
   body('context').optional().isString().trim().isLength({ max: 5000 }).withMessage('Context too long'),
 ];
 
-app.post('/api/chat', chatLimiter, validateChat, asyncHandler(async (req, res) => {
+/**
+ * @swagger
+ * /api/v1/chat:
+ *   post:
+ *     tags: [Chat]
+ *     summary: Send chat messages to Grok AI
+ *     description: Send a conversation to the Grok API and receive a response. Supports caching to reduce API calls.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/ChatRequest'
+ *           example:
+ *             messages:
+ *               - role: user
+ *                 content: "Hello, how are you?"
+ *             systemPrompt: "You are a helpful AI assistant"
+ *             temperature: 0.7
+ *     responses:
+ *       200:
+ *         description: Successful response from Grok
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ChatResponse'
+ *       400:
+ *         $ref: '#/components/responses/BadRequest'
+ *       429:
+ *         $ref: '#/components/responses/TooManyRequests'
+ *       500:
+ *         $ref: '#/components/responses/InternalServerError'
+ */
+// V1 Chat endpoint
+app.post('/api/v1/chat', chatLimiter, validateChat, asyncHandler(async (req, res) => {
   try {
     // Check validation results
     const errors = validationResult(req);
@@ -258,7 +294,8 @@ app.post('/api/chat', chatLimiter, validateChat, asyncHandler(async (req, res) =
   }
 }));
 
-app.post('/api/evaluate', chatLimiter, validateEvaluate, asyncHandler(async (req, res) => {
+// V1 Evaluate endpoint
+app.post('/api/v1/evaluate', chatLimiter, validateEvaluate, asyncHandler(async (req, res) => {
   try {
     // Check validation results
     const errors = validationResult(req);
@@ -324,7 +361,8 @@ Please provide:
 // ============ NEW CONVERSATION UPLOAD & ANALYSIS ENDPOINTS ============
 
 // Upload ChatGPT conversations JSON file
-app.post('/api/upload', uploadLimiter, upload.single('file'), asyncHandler(async (req, res) => {
+// V1 Upload endpoint
+app.post('/api/v1/upload', uploadLimiter, upload.single('file'), asyncHandler(async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
@@ -379,7 +417,8 @@ app.post('/api/upload', uploadLimiter, upload.single('file'), asyncHandler(async
 }));
 
 // Get import status
-app.get('/api/imports/:importId', asyncHandler(async (req, res) => {
+// V1 Get import status
+app.get('/api/v1/imports/:importId', asyncHandler(async (req, res) => {
   const { importId } = req.params;
   const userId = req.query.userId || 'anonymous';
 
@@ -394,21 +433,24 @@ app.get('/api/imports/:importId', asyncHandler(async (req, res) => {
 }));
 
 // List all imports for a user
-app.get('/api/imports', asyncHandler(async (req, res) => {
+// V1 List imports
+app.get('/api/v1/imports', asyncHandler(async (req, res) => {
   const userId = req.query.userId || 'anonymous';
   const imports = await db.listImports(userId);
   res.json(imports);
 }));
 
 // List all topics
-app.get('/api/topics', asyncHandler(async (req, res) => {
+// V1 List topics
+app.get('/api/v1/topics', asyncHandler(async (req, res) => {
   const userId = req.query.userId || null;
   const topics = await db.listTopics(userId);
   res.json(topics);
 }));
 
 // Get conversations by topic
-app.get('/api/topics/:topicId/conversations', asyncHandler(async (req, res) => {
+// V1 Get conversations by topic
+app.get('/api/v1/topics/:topicId/conversations', asyncHandler(async (req, res) => {
   const { topicId } = req.params;
   const userId = req.query.userId || null;
   const limit = parseInt(req.query.limit) || 50;
@@ -419,7 +461,8 @@ app.get('/api/topics/:topicId/conversations', asyncHandler(async (req, res) => {
 }));
 
 // Get conversation with full analysis
-app.get('/api/conversations/:conversationId', asyncHandler(async (req, res) => {
+// V1 Get conversation by ID
+app.get('/api/v1/conversations/:conversationId', asyncHandler(async (req, res) => {
   const { conversationId } = req.params;
 
   const conversation = await db.getConversationWithAnalysis(conversationId);
@@ -432,7 +475,8 @@ app.get('/api/conversations/:conversationId', asyncHandler(async (req, res) => {
 }));
 
 // List conversations (optionally filtered by source)
-app.get('/api/conversations', asyncHandler(async (req, res) => {
+// V1 List conversations
+app.get('/api/v1/conversations', asyncHandler(async (req, res) => {
   const userId = req.query.userId || 'anonymous';
   const limit = parseInt(req.query.limit) || 50;
   const offset = parseInt(req.query.offset) || 0;
@@ -441,9 +485,77 @@ app.get('/api/conversations', asyncHandler(async (req, res) => {
   res.json(conversations);
 }));
 
-// ============ EXISTING ENDPOINTS ============
+// ============ API VERSIONING ============
 
-app.get('/api/health', asyncHandler(async (req, res) => {
+/**
+ * API Version Middleware
+ * Adds version information to responses and enables versioning
+ */
+app.use((req, res, next) => {
+  // Extract version from path or use default v1
+  const versionMatch = req.path.match(/^\/api\/v(\d+)\//);
+  req.apiVersion = versionMatch ? `v${versionMatch[1]}` : 'v1';
+
+  // Add version header to all API responses
+  if (req.path.startsWith('/api/')) {
+    res.setHeader('X-API-Version', req.apiVersion);
+    res.setHeader('X-Supported-Versions', 'v1');
+  }
+
+  next();
+});
+
+// ============ API V1 ENDPOINTS ============
+
+// Swagger API documentation
+app.use('/api/v1/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+  customCss: '.swagger-ui .topbar { display: none }',
+  customSiteTitle: 'Grok Chat API Documentation',
+}));
+
+// API Version info endpoint
+app.get('/api/v1', (req, res) => {
+  res.json({
+    version: '1.0.0',
+    status: 'stable',
+    endpoints: [
+      { method: 'POST', path: '/api/v1/chat', description: 'Send chat messages to Grok' },
+      { method: 'POST', path: '/api/v1/evaluate', description: 'Evaluate multiple outputs' },
+      { method: 'POST', path: '/api/v1/upload', description: 'Upload ChatGPT export' },
+      { method: 'GET', path: '/api/v1/health', description: 'Health check endpoint' },
+      { method: 'GET', path: '/api/v1/conversations', description: 'List conversations' },
+      { method: 'GET', path: '/api/v1/conversations/:id', description: 'Get conversation by ID' },
+      { method: 'GET', path: '/api/v1/imports', description: 'List imports' },
+      { method: 'GET', path: '/api/v1/imports/:id', description: 'Get import status' },
+      { method: 'GET', path: '/api/v1/topics', description: 'List topics' },
+      { method: 'GET', path: '/api/v1/topics/:id/conversations', description: 'Get conversations by topic' },
+    ],
+    documentation: '/api/v1/docs',
+  });
+});
+
+/**
+ * @swagger
+ * /api/v1/health:
+ *   get:
+ *     tags: [Health]
+ *     summary: Health check endpoint
+ *     description: Check the health status of the API, including database and API key configuration
+ *     responses:
+ *       200:
+ *         description: System is healthy
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/HealthResponse'
+ *       503:
+ *         description: System is degraded or unhealthy
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/HealthResponse'
+ */
+app.get('/api/v1/health', asyncHandler(async (req, res) => {
   const apiKey = process.env.XAI_API_KEY;
   const dbHealthy = await db.checkDatabase();
 
@@ -564,6 +676,60 @@ async function processConversationsAsync(importId, userId, conversations, filePa
     await fs.unlink(filePath).catch(() => {});
   }
 }
+
+// ============ BACKWARD COMPATIBILITY ALIASES ============
+// Redirect /api/* to /api/v1/* for backward compatibility
+// This ensures existing clients continue to work
+
+app.post('/api/chat', (req, res, next) => {
+  req.url = '/api/v1/chat';
+  app._router.handle(req, res, next);
+});
+
+app.post('/api/evaluate', (req, res, next) => {
+  req.url = '/api/v1/evaluate';
+  app._router.handle(req, res, next);
+});
+
+app.post('/api/upload', (req, res, next) => {
+  req.url = '/api/v1/upload';
+  app._router.handle(req, res, next);
+});
+
+app.get('/api/health', (req, res, next) => {
+  req.url = '/api/v1/health';
+  app._router.handle(req, res, next);
+});
+
+app.get('/api/imports/:importId', (req, res, next) => {
+  req.url = `/api/v1/imports/${req.params.importId}`;
+  app._router.handle(req, res, next);
+});
+
+app.get('/api/imports', (req, res, next) => {
+  req.url = '/api/v1/imports';
+  app._router.handle(req, res, next);
+});
+
+app.get('/api/topics', (req, res, next) => {
+  req.url = '/api/v1/topics';
+  app._router.handle(req, res, next);
+});
+
+app.get('/api/topics/:topicId/conversations', (req, res, next) => {
+  req.url = `/api/v1/topics/${req.params.topicId}/conversations`;
+  app._router.handle(req, res, next);
+});
+
+app.get('/api/conversations/:conversationId', (req, res, next) => {
+  req.url = `/api/v1/conversations/${req.params.conversationId}`;
+  app._router.handle(req, res, next);
+});
+
+app.get('/api/conversations', (req, res, next) => {
+  req.url = '/api/v1/conversations';
+  app._router.handle(req, res, next);
+});
 
 // 404 handler - must be after all routes
 app.use(notFoundHandler);
