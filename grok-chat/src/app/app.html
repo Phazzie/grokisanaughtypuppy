@@ -13,8 +13,14 @@
             </h1>
             <p class="text-gray-400 text-sm">Powered by grok-4-fast-reasoning</p>
           </div>
+
+          <!-- Offline Indicator -->
+          <div *ngIf="!isOnline()" class="flex items-center gap-2 px-3 py-1 rounded-lg bg-yellow-500/20 border border-yellow-500/50">
+            <span class="text-yellow-400">⚠️</span>
+            <span class="text-sm text-yellow-200">Offline</span>
+          </div>
         </div>
-        
+
         <div class="flex gap-2 flex-wrap">
           <button
             (click)="switchView('chat')"
