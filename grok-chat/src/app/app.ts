@@ -47,6 +47,8 @@ export class App {
   evaluationCriteria = 'Quality, accuracy, helpfulness, creativity, and clarity';
 
   apiKeyConfigured = false;
+  testingApi = false;
+  testJoke = '';
 
   constructor(private chatService: ChatService) {
     this.checkApiKey();
@@ -54,6 +56,23 @@ export class App {
 
   switchView(mode: 'chat' | 'library') {
     this.viewMode = mode;
+  }
+
+  testApi() {
+    this.testingApi = true;
+    this.testJoke = '';
+    this.error = '';
+
+    this.chatService.testApiWithJoke().subscribe({
+      next: (response) => {
+        this.testJoke = response.choices[0].message.content;
+        this.testingApi = false;
+      },
+      error: (err) => {
+        this.error = 'API test failed: ' + (err.error?.error || 'Please check your API key configuration');
+        this.testingApi = false;
+      }
+    });
   }
 
   checkApiKey() {

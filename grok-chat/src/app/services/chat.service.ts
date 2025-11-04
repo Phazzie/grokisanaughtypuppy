@@ -135,6 +135,14 @@ export class ChatService {
     return this.http.get<{ status: string; hasApiKey: boolean }>(`${this.apiUrl}/health`);
   }
 
+  testApiWithJoke(): Observable<ChatResponse> {
+    return this.http.post<ChatResponse>(`${this.apiUrl}/chat`, {
+      messages: [{ role: 'user', content: 'Tell me a short, clean PG-13 joke about AI or programming. Just the joke, no commentary.' }],
+      systemPrompt: 'You are a witty comedian who tells clean, family-friendly jokes.',
+      temperature: 0.9
+    });
+  }
+
   // ============ CONVERSATION UPLOAD & ANALYSIS ============
 
   uploadConversations(file: File, userId: string = 'anonymous'): Observable<UploadResponse> {

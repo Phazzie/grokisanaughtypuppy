@@ -173,8 +173,8 @@ export class AnalyticsService {
     // Largest Contentful Paint (LCP)
     const lcpObserver = new PerformanceObserver((list) => {
       const entries = list.getEntries();
-      const lastEntry = entries[entries.length - 1];
-      this.trackPerformance('lcp', lastEntry.renderTime || lastEntry.loadTime, 'ms');
+      const lastEntry = entries[entries.length - 1] as any;
+      this.trackPerformance('lcp', lastEntry.renderTime || lastEntry.loadTime || lastEntry.startTime, 'ms');
     });
     lcpObserver.observe({ entryTypes: ['largest-contentful-paint'] });
 
@@ -266,21 +266,21 @@ export class AnalyticsService {
 
   private getMostUsedTemperature(): number {
     const events = this.events$.value.filter(
-      e => e.category === 'conversation' && e.metadata?.temperature
+      e => e.category === 'conversation' && e.metadata?.['temperature']
     );
-    
+
     if (events.length === 0) return 0.7;
 
-    const temps = events.map(e => e.metadata!.temperature);
+    const temps = events.map(e => e.metadata!['temperature'] as number);
     const tempCounts = temps.reduce((acc, temp) => {
       acc[temp] = (acc[temp] || 0) + 1;
       return acc;
     }, {} as Record<number, number>);
 
-    return parseFloat(
-      Object.entries(tempCounts)
-        .sort(([, a], [, b]) => b - a)[0][0]
-    );
+    const sortedEntries = Object.entries(tempCounts)
+      .sort(([, a], [, b]: [string, number]) => (b as number) - (a as number));
+
+    return sortedEntries.length > 0 ? parseFloat(sortedEntries[0][0]) : 0.7;
   }
 
   private estimateTokens(messages: any[]): number {
@@ -302,7 +302,7 @@ export class AnalyticsService {
     }, {} as Record<string, number>);
 
     return Object.entries(wordCounts)
-      .sort(([, a], [, b]) => b - a)
+      .sort(([, a], [, b]: [string, number]) => (b as number) - (a as number))
       .slice(0, 5)
       .map(([word]) => word);
   }
