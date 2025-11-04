@@ -381,6 +381,22 @@ async function listImports(userId, limit = 50) {
   }
 }
 
+// Get a specific import by ID
+async function getImportById(importId, userId) {
+  const pool = initDatabase();
+
+  try {
+    const result = await pool.query(
+      `SELECT * FROM imports WHERE id = $1 AND user_id = $2`,
+      [importId, userId]
+    );
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error('Error getting import:', error);
+    throw error;
+  }
+}
+
 // ============ TOPICS ============
 
 // Create or get a topic by name
@@ -545,6 +561,22 @@ async function addInsight(analysisId, insightType, title, description, messageId
   }
 }
 
+// Get analysis ID by conversation ID
+async function getAnalysisIdByConversationId(conversationId) {
+  const pool = initDatabase();
+
+  try {
+    const result = await pool.query(
+      'SELECT id FROM conversation_analyses WHERE conversation_id = $1',
+      [conversationId]
+    );
+    return result.rows[0]?.id || null;
+  } catch (error) {
+    console.error('Error getting analysis ID:', error);
+    throw error;
+  }
+}
+
 // Get conversation with analysis
 async function getConversationWithAnalysis(conversationId) {
   const pool = initDatabase();
@@ -663,6 +695,7 @@ module.exports = {
   createImport,
   updateImportStatus,
   listImports,
+  getImportById,
   // Topics
   createOrGetTopic,
   linkConversationToTopic,
@@ -671,6 +704,7 @@ module.exports = {
   // Analyses
   createAnalysis,
   addInsight,
+  getAnalysisIdByConversationId,
   getConversationWithAnalysis,
   importChatGPTConversation
 };

@@ -266,7 +266,7 @@ export class AnalyticsService {
 
   private getMostUsedTemperature(): number {
     const events = this.events$.value.filter(
-      e => e.category === 'conversation' && e.metadata?.['temperature']
+      e => e.category === 'conversation' && e.metadata?.['temperature'] !== undefined
     );
 
     if (events.length === 0) return 0.7;

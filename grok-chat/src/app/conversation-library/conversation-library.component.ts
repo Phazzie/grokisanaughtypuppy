@@ -1,4 +1,4 @@
-import { Component, OnInit, signal } from '@angular/core';
+import { Component, OnInit, OnDestroy, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import {
@@ -19,7 +19,7 @@ type ViewMode = 'upload' | 'topics' | 'conversations' | 'viewer';
   templateUrl: './conversation-library.component.html',
   styleUrls: ['./conversation-library.component.scss']
 })
-export class ConversationLibraryComponent implements OnInit {
+export class ConversationLibraryComponent implements OnInit, OnDestroy {
   // State signals
   protected viewMode = signal<ViewMode>('upload');
   protected topics = signal<Topic[]>([]);
@@ -33,7 +33,7 @@ export class ConversationLibraryComponent implements OnInit {
   // Upload state
   protected selectedFile: File | null = null;
   protected uploadProgress = signal<Import | null>(null);
-  protected uploadPollingInterval: any = null;
+  protected uploadPollingInterval: number | null = null;
 
   // User ID (in production, this would come from auth)
   private userId = 'anonymous';
@@ -220,7 +220,9 @@ export class ConversationLibraryComponent implements OnInit {
   }
 
   formatDate(dateString: string): string {
+    if (!dateString) return 'N/A';
     const date = new Date(dateString);
+    if (isNaN(date.getTime())) return 'Invalid Date';
     return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
   }
 
@@ -232,6 +234,10 @@ export class ConversationLibraryComponent implements OnInit {
 
   getInsightsByType(insights: Insight[], type: string): Insight[] {
     return insights.filter(i => i.insight_type === type);
+  }
+
+  getAdditionalInsights(insights: Insight[]): Insight[] {
+    return insights.filter(i => i.insight_type !== 'high_point' && i.insight_type !== 'low_point');
   }
 
   getSentimentColor(sentiment: string): string {

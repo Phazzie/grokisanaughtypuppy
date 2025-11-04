@@ -248,7 +248,10 @@ function cleanMessageContent(content) {
   // Trim whitespace
   cleaned = cleaned.trim();
 
-  // Remove any null bytes or other control characters
+  // Remove any null bytes or other control characters (excluding \n and \r)
+  // This regex targets: \x00-\x08 (null to backspace), \x0B-\x0C (vertical tab, form feed),
+  // \x0E-\x1F (shift out to unit separator), \x7F (delete)
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentionally removing control characters from ChatGPT export data
   cleaned = cleaned.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]/g, '');
 
   return cleaned;

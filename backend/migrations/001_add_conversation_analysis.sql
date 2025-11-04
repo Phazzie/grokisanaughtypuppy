@@ -4,6 +4,9 @@
 -- 2. Topic categorization
 -- 3. AI-powered conversation analysis
 
+-- Ensure pgcrypto extension exists for gen_random_uuid() (PostgreSQL < 13)
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 -- Add columns to conversations table for imports
 ALTER TABLE conversations
 ADD COLUMN IF NOT EXISTS user_id VARCHAR(255),
@@ -97,6 +100,8 @@ BEGIN
     RETURN NULL;
 END;
 $$ language 'plpgsql';
+
+DROP TRIGGER IF EXISTS update_topic_conversation_count ON conversation_topics;
 
 CREATE TRIGGER update_topic_conversation_count
     AFTER INSERT OR DELETE ON conversation_topics

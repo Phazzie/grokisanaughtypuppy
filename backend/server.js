@@ -142,8 +142,10 @@ app.post('/api/chat', chatLimiter, validateChat, asyncHandler(async (req, res) =
     }
 
     const { messages, systemPrompt, temperature = 0.7 } = req.body;
-    
-    // Additional validation
+
+    // Additional validation: Limit conversation history to prevent excessive token usage
+    // and potential API rate limit issues. 50 messages is typically sufficient for context
+    // while staying within reasonable token limits for most models.
     if (messages.length > 50) {
       return res.status(400).json({ error: 'Too many messages in conversation' });
     }
@@ -297,7 +299,9 @@ app.post('/api/upload', uploadLimiter, upload.single('file'), asyncHandler(async
   } catch (error) {
     console.error('Error uploading file:', error);
     if (req.file) {
-      await fs.unlink(req.file.path).catch(() => {});
+      await fs.unlink(req.file.path).catch((unlinkError) => {
+        console.error('Error cleaning up uploaded file:', unlinkError);
+      });
     }
     res.status(500).json({ error: 'Failed to process upload' });
   }
@@ -308,8 +312,7 @@ app.get('/api/imports/:importId', asyncHandler(async (req, res) => {
   const { importId } = req.params;
   const userId = req.query.userId || 'anonymous';
 
-  const imports = await db.listImports(userId);
-  const importRecord = imports.find(i => i.id === importId);
+  const importRecord = await db.getImportById(importId, userId);
 
   if (!importRecord) {
     return res.status(404).json({ error: 'Import not found' });
@@ -420,14 +423,9 @@ async function processConversationsAsync(importId, userId, conversations, filePa
           );
 
           // Get analysis ID for insights
-          const analysisResult = await db.initDatabase().query(
-            'SELECT id FROM conversation_analyses WHERE conversation_id = $1',
-            [conversationId]
-          );
+          const analysisId = await db.getAnalysisIdByConversationId(conversationId);
 
-          if (analysisResult.rows.length > 0) {
-            const analysisId = analysisResult.rows[0].id;
-
+          if (analysisId) {
             // Generate and save insights
             const insights = await generateInsights(conversation, conversation.messages);
             for (const insight of insights) {
@@ -469,7 +467,9 @@ async function processConversationsAsync(importId, userId, conversations, filePa
     await db.updateImportStatus(importId, 'completed', conversations.length, processed);
 
     // Clean up uploaded file
-    await fs.unlink(filePath).catch(() => {});
+    await fs.unlink(filePath).catch((unlinkError) => {
+      console.error(`Error cleaning up file for import ${importId}:`, unlinkError);
+    });
 
     console.log(`✅ Import ${importId} completed: ${processed}/${conversations.length} conversations processed`);
 
@@ -478,7 +478,9 @@ async function processConversationsAsync(importId, userId, conversations, filePa
     await db.updateImportStatus(importId, 'failed', 0, 0, error.message);
 
     // Clean up file on error
-    await fs.unlink(filePath).catch(() => {});
+    await fs.unlink(filePath).catch((unlinkError) => {
+      console.error(`Error cleaning up file after failed import ${importId}:`, unlinkError);
+    });
   }
 }
 

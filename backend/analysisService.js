@@ -315,7 +315,7 @@ function parseAnalysisResponse(response) {
       summary: parsed.summary || 'No summary available',
       mainTopics: parsed.main_topics || [],
       sentiment: parsed.sentiment || 'neutral',
-      complexityScore: parsed.complexity_score || 0.5
+      complexityScore: parsed.complexity_score !== undefined ? parsed.complexity_score : 0.5
     };
   } catch (error) {
     console.error('Error parsing analysis response:', error);
@@ -348,7 +348,7 @@ function parseTopicsResponse(response) {
     return parsed.map(topic => ({
       name: topic.name || 'Untitled Topic',
       description: topic.description || '',
-      relevanceScore: parseFloat(topic.relevance_score) || 1.0
+      relevanceScore: !isNaN(parseFloat(topic.relevance_score)) ? parseFloat(topic.relevance_score) : 1.0
     }));
   } catch (error) {
     console.error('Error parsing topics response:', error);
@@ -377,7 +377,7 @@ function parseInsightsResponse(response) {
       insightType: insight.insight_type || 'meta_insights',
       title: insight.title || 'Untitled Insight',
       description: insight.description || '',
-      confidenceScore: parseFloat(insight.confidence_score) || 0.5
+      confidenceScore: !isNaN(parseFloat(insight.confidence_score)) ? parseFloat(insight.confidence_score) : 0.5
     }));
   } catch (error) {
     console.error('Error parsing insights response:', error);
