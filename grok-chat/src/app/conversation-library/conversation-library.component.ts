@@ -7,8 +7,7 @@ import {
   Conversation,
   ConversationWithAnalysis,
   Import,
-  Insight,
-  Message
+  Insight
 } from '../services/chat.service';
 
 type ViewMode = 'upload' | 'topics' | 'conversations' | 'viewer';
