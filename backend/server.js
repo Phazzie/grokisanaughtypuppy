@@ -6,6 +6,7 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const { body, validationResult } = require('express-validator');
 const mongoSanitize = require('express-mongo-sanitize');
+const compression = require('compression');
 const crypto = require('crypto');
 const multer = require('multer');
 const path = require('path');
@@ -18,6 +19,17 @@ const { analyzeConversation, categorizeTopics, generateInsights } = require('./a
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Compression: Gzip responses for better performance
+app.use(compression({
+  filter: (req, res) => {
+    if (req.headers['x-no-compression']) {
+      return false;
+    }
+    return compression.filter(req, res);
+  },
+  level: 6, // Balance between speed and compression ratio
+}));
 
 // Security: Helmet for security headers
 app.use(helmet({
@@ -368,15 +380,23 @@ app.get('/api/conversations', asyncHandler(async (req, res) => {
 
 // ============ EXISTING ENDPOINTS ============
 
-app.get('/api/health', (req, res) => {
+app.get('/api/health', asyncHandler(async (req, res) => {
   const apiKey = process.env.XAI_API_KEY;
-  res.json({
-    status: 'ok',
+  const dbHealthy = await db.checkDatabase();
+
+  const health = {
+    status: dbHealthy ? 'ok' : 'degraded',
     timestamp: new Date().toISOString(),
-    hasApiKey: !!apiKey,
-    // Don't expose sensitive config details
-  });
-});
+    checks: {
+      apiKey: !!apiKey,
+      database: dbHealthy,
+      uptime: Math.floor(process.uptime())
+    }
+  };
+
+  const statusCode = health.status === 'ok' ? 200 : 503;
+  res.status(statusCode).json(health);
+}));
 
 
 // ============ BACKGROUND PROCESSING ============
@@ -503,10 +523,51 @@ function validateEnvironment() {
 
 validateEnvironment();
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Backend server running on http://localhost:${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`CORS allowed origins: ${allowedOrigins.join(', ')}`);
   console.log(`Rate limiting: ${apiLimiter.max} requests per ${apiLimiter.windowMs / 60000} minutes`);
-  console.log('✅ Security measures active: Helmet, CORS, Rate Limiting, Input Validation');
+  console.log('✅ Security measures active: Helmet, CORS, Rate Limiting, Input Validation, Compression');
+});
+
+// Graceful shutdown handling
+function gracefulShutdown(signal) {
+  console.log(`\n⚠️  Received ${signal}, starting graceful shutdown...`);
+
+  server.close(async () => {
+    console.log('✅ HTTP server closed');
+
+    // Close database connections
+    try {
+      await db.closeDatabase();
+      console.log('✅ Database connections closed');
+    } catch (err) {
+      console.error('❌ Error closing database:', err);
+    }
+
+    console.log('✅ Graceful shutdown complete');
+    process.exit(0);
+  });
+
+  // Force shutdown after 30 seconds
+  setTimeout(() => {
+    console.error('❌ Forced shutdown after timeout');
+    process.exit(1);
+  }, 30000);
+}
+
+// Listen for termination signals
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+// Handle uncaught errors
+process.on('uncaughtException', (err) => {
+  console.error('❌ Uncaught Exception:', err);
+  gracefulShutdown('uncaughtException');
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+  gracefulShutdown('unhandledRejection');
 });
