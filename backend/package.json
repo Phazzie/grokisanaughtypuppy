@@ -12,6 +12,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@sentry/node": "^10.22.0",
     "axios": "^1.12.0",
     "compression": "^1.8.1",
     "cors": "^2.8.5",
@@ -24,6 +25,9 @@
     "helmet": "^8.0.0",
     "isomorphic-dompurify": "^2.19.0",
     "multer": "^2.0.2",
-    "pg": "^8.13.1"
+    "node-cache": "^5.1.2",
+    "pg": "^8.13.1",
+    "uuid": "^13.0.0",
+    "winston": "^3.18.3"
   }
 }

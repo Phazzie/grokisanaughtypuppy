@@ -11,6 +11,9 @@ const crypto = require('crypto');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs').promises;
+const { v4: uuidv4 } = require('uuid');
+const logger = require('./utils/logger');
+const cache = require('./utils/cache');
 const { detectSuspiciousActivity, securityHeaders, sanitizeResponse } = require('./middleware/security');
 const { errorHandler, notFoundHandler, asyncHandler } = require('./middleware/errorHandler');
 const db = require('./db');
@@ -19,6 +22,50 @@ const { analyzeConversation, categorizeTopics, generateInsights } = require('./a
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Sentry integration (production only)
+if (process.env.SENTRY_DSN && process.env.NODE_ENV === 'production') {
+  const Sentry = require('@sentry/node');
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    environment: process.env.NODE_ENV,
+    tracesSampleRate: 1.0,
+  });
+  app.use(Sentry.Handlers.requestHandler());
+  app.use(Sentry.Handlers.tracingHandler());
+}
+
+// Request ID tracking middleware
+app.use((req, res, next) => {
+  req.id = req.headers['x-request-id'] || uuidv4();
+  res.setHeader('X-Request-ID', req.id);
+
+  // Attach logger with request context
+  req.logger = logger.withRequest(req);
+
+  // Log request with ID
+  const start = Date.now();
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    req.logger.info('Request completed', {
+      method: req.method,
+      path: req.path,
+      statusCode: res.statusCode,
+      duration,
+      ip: req.ip,
+    });
+
+    // Log slow requests
+    if (duration > 1000) {
+      logger.performance('slow_request', duration, {
+        method: req.method,
+        path: req.path,
+      });
+    }
+  });
+
+  next();
+});
 
 // Compression: Gzip responses for better performance
 app.use(compression({
@@ -79,24 +126,25 @@ app.use(detectSuspiciousActivity);
 // Security: Add security-focused HTTP headers
 app.use(securityHeaders);
 
-// Security: Rate limiting
+// Security: Rate limiting (configurable via environment)
 const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
+  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100,
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => req.path === '/api/health', // Don't rate limit health checks
 });
 
 const chatLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 20, // Limit chat requests to 20 per minute
+  windowMs: 60 * 1000,
+  max: parseInt(process.env.CHAT_RATE_LIMIT_MAX) || 20,
   message: 'Too many chat requests, please slow down.',
 });
 
 const uploadLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 10, // Limit uploads to 10 per hour
+  windowMs: 60 * 60 * 1000,
+  max: parseInt(process.env.UPLOAD_RATE_LIMIT_MAX) || 10,
   message: 'Too many upload requests, please try again later.',
 });
 
@@ -153,16 +201,26 @@ app.post('/api/chat', chatLimiter, validateChat, asyncHandler(async (req, res) =
       return res.status(400).json({ errors: errors.array() });
     }
 
-    const { messages, systemPrompt, temperature = 0.7 } = req.body;
-    
+    const { messages, systemPrompt, temperature = parseFloat(process.env.DEFAULT_TEMPERATURE) || 0.7 } = req.body;
+
     // Additional validation
     if (messages.length > 50) {
       return res.status(400).json({ error: 'Too many messages in conversation' });
     }
-    
+
     const apiKey = process.env.XAI_API_KEY;
     if (!apiKey) {
       return res.status(500).json({ error: 'XAI_API_KEY not configured' });
+    }
+
+    // Check cache (unless explicitly disabled)
+    const cacheKey = cache.generateCacheKey({ messages, systemPrompt, temperature });
+    if (!req.query.noCache) {
+      const cached = cache.get(cacheKey);
+      if (cached) {
+        req.logger.info('Cache hit for chat request');
+        return res.json({ ...cached, cached: true });
+      }
     }
 
     const messagesWithSystem = [
@@ -186,11 +244,16 @@ app.post('/api/chat', chatLimiter, validateChat, asyncHandler(async (req, res) =
       }
     );
 
+    // Cache the response
+    cache.set(cacheKey, response.data);
+
     res.json(response.data);
   } catch (error) {
-    console.error('Error calling Grok API:', error.response?.data || error.message);
-    res.status(error.response?.status || 500).json({ 
-      error: error.response?.data?.error?.message || 'Failed to get response from Grok' 
+    req.logger.error('Error calling Grok API', {
+      error: error.response?.data || error.message
+    });
+    res.status(error.response?.status || 500).json({
+      error: error.response?.data?.error?.message || 'Failed to get response from Grok'
     });
   }
 }));
@@ -512,13 +575,43 @@ app.use(errorHandler);
 function validateEnvironment() {
   const required = ['XAI_API_KEY'];
   const missing = required.filter(key => !process.env[key]);
-  
+
   if (missing.length > 0) {
     console.error('❌ Missing required environment variables:', missing.join(', '));
     process.exit(1);
   }
-  
-  console.log('✅ All required environment variables are set');
+
+  // Validate numeric environment variables
+  const numericVars = {
+    PORT: process.env.PORT,
+    DB_PORT: process.env.DB_PORT,
+    DB_POOL_MAX: process.env.DB_POOL_MAX,
+    DB_POOL_MIN: process.env.DB_POOL_MIN,
+    RATE_LIMIT_WINDOW_MS: process.env.RATE_LIMIT_WINDOW_MS,
+    RATE_LIMIT_MAX_REQUESTS: process.env.RATE_LIMIT_MAX_REQUESTS,
+  };
+
+  for (const [key, value] of Object.entries(numericVars)) {
+    if (value && isNaN(Number(value))) {
+      console.error(`❌ Environment variable ${key} must be a number, got: ${value}`);
+      process.exit(1);
+    }
+  }
+
+  // Validate temperature range
+  const defaultTemp = parseFloat(process.env.DEFAULT_TEMPERATURE);
+  if (defaultTemp && (defaultTemp < 0 || defaultTemp > 2)) {
+    console.error(`❌ DEFAULT_TEMPERATURE must be between 0 and 2, got: ${defaultTemp}`);
+    process.exit(1);
+  }
+
+  // Validate NODE_ENV
+  const validEnvs = ['development', 'production', 'test'];
+  if (process.env.NODE_ENV && !validEnvs.includes(process.env.NODE_ENV)) {
+    console.warn(`⚠️  NODE_ENV should be one of: ${validEnvs.join(', ')}, got: ${process.env.NODE_ENV}`);
+  }
+
+  console.log('✅ All required environment variables are set and validated');
 }
 
 validateEnvironment();
