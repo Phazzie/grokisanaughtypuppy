@@ -2,6 +2,14 @@
 
 All notable changes to the Grok Chat application are documented in this file.
 
+## [1.0.1] - November 4, 2025
+
+### 🐛 Bug Fixes
+- **Build Configuration**
+  - Fixed production build failure on Digital Ocean caused by overly restrictive Angular component style budgets
+  - Increased `anyComponentStyle` budget from 4 kB/8 kB to 15 kB/25 kB (warning/error)
+  - Added `BUDGET-CONFIGURATION.md` documentation explaining rationale and standards
+
 ## [1.0.0] - October 21, 2025
 
 ### 🚀 Major Release: Production Deployment Ready
