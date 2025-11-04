@@ -7,8 +7,14 @@ const rateLimit = require('express-rate-limit');
 const { body, validationResult } = require('express-validator');
 const mongoSanitize = require('express-mongo-sanitize');
 const crypto = require('crypto');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs').promises;
 const { detectSuspiciousActivity, securityHeaders, sanitizeResponse } = require('./middleware/security');
 const { errorHandler, notFoundHandler, asyncHandler } = require('./middleware/errorHandler');
+const db = require('./db');
+const { parseChatGPTExport, validateConversation } = require('./conversationParser');
+const { analyzeConversation, categorizeTopics, generateInsights } = require('./analysisService');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -44,8 +50,8 @@ app.use(cors({
   credentials: true
 }));
 
-// Security: Request size limits
-app.use(express.json({ limit: '1mb' }));
+// Security: Request size limits (increase for file uploads)
+app.use(express.json({ limit: '10mb' }));
 
 // Security: Sanitize data against NoSQL injection and XSS
 app.use(mongoSanitize({
@@ -76,7 +82,34 @@ const chatLimiter = rateLimit({
   message: 'Too many chat requests, please slow down.',
 });
 
+const uploadLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 10, // Limit uploads to 10 per hour
+  message: 'Too many upload requests, please try again later.',
+});
+
 app.use('/api/', apiLimiter);
+
+// Configure multer for file uploads
+const upload = multer({
+  dest: 'uploads/',
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB max file size
+  },
+  fileFilter: (req, file, cb) => {
+    // Only accept JSON files
+    if (file.mimetype === 'application/json' || path.extname(file.originalname) === '.json') {
+      cb(null, true);
+    } else {
+      cb(new Error('Only JSON files are allowed'));
+    }
+  }
+});
+
+// Initialize database on startup
+db.createTables().catch(err => {
+  console.error('Failed to initialize database:', err);
+});
 
 // Grok API endpoint
 const GROK_API_URL = 'https://api.x.ai/v1/chat/completions';
@@ -213,9 +246,131 @@ Please provide:
   }
 }));
 
+// ============ NEW CONVERSATION UPLOAD & ANALYSIS ENDPOINTS ============
+
+// Upload ChatGPT conversations JSON file
+app.post('/api/upload', uploadLimiter, upload.single('file'), asyncHandler(async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    const userId = req.body.userId || 'anonymous';
+    const filePath = req.file.path;
+
+    // Read and parse the JSON file
+    const fileContent = await fs.readFile(filePath, 'utf8');
+    let jsonData;
+
+    try {
+      jsonData = JSON.parse(fileContent);
+    } catch (parseError) {
+      await fs.unlink(filePath); // Clean up file
+      return res.status(400).json({ error: 'Invalid JSON file' });
+    }
+
+    // Create import record
+    const importRecord = await db.createImport(userId, req.file.originalname, req.file.size);
+
+    // Parse conversations
+    const conversations = parseChatGPTExport(jsonData);
+
+    if (conversations.length === 0) {
+      await db.updateImportStatus(importRecord.id, 'failed', 0, 0, 'No valid conversations found in file');
+      await fs.unlink(filePath); // Clean up file
+      return res.status(400).json({ error: 'No valid conversations found in file' });
+    }
+
+    // Update import with total count
+    await db.updateImportStatus(importRecord.id, 'processing', conversations.length, 0);
+
+    // Process conversations in the background
+    processConversationsAsync(importRecord.id, userId, conversations, filePath);
+
+    res.json({
+      success: true,
+      importId: importRecord.id,
+      totalConversations: conversations.length,
+      message: `Processing ${conversations.length} conversations. This may take a few minutes.`
+    });
+
+  } catch (error) {
+    console.error('Error uploading file:', error);
+    if (req.file) {
+      await fs.unlink(req.file.path).catch(() => {});
+    }
+    res.status(500).json({ error: 'Failed to process upload' });
+  }
+}));
+
+// Get import status
+app.get('/api/imports/:importId', asyncHandler(async (req, res) => {
+  const { importId } = req.params;
+  const userId = req.query.userId || 'anonymous';
+
+  const imports = await db.listImports(userId);
+  const importRecord = imports.find(i => i.id === importId);
+
+  if (!importRecord) {
+    return res.status(404).json({ error: 'Import not found' });
+  }
+
+  res.json(importRecord);
+}));
+
+// List all imports for a user
+app.get('/api/imports', asyncHandler(async (req, res) => {
+  const userId = req.query.userId || 'anonymous';
+  const imports = await db.listImports(userId);
+  res.json(imports);
+}));
+
+// List all topics
+app.get('/api/topics', asyncHandler(async (req, res) => {
+  const userId = req.query.userId || null;
+  const topics = await db.listTopics(userId);
+  res.json(topics);
+}));
+
+// Get conversations by topic
+app.get('/api/topics/:topicId/conversations', asyncHandler(async (req, res) => {
+  const { topicId } = req.params;
+  const userId = req.query.userId || null;
+  const limit = parseInt(req.query.limit) || 50;
+  const offset = parseInt(req.query.offset) || 0;
+
+  const conversations = await db.getConversationsByTopic(topicId, userId, limit, offset);
+  res.json(conversations);
+}));
+
+// Get conversation with full analysis
+app.get('/api/conversations/:conversationId', asyncHandler(async (req, res) => {
+  const { conversationId } = req.params;
+
+  const conversation = await db.getConversationWithAnalysis(conversationId);
+
+  if (!conversation) {
+    return res.status(404).json({ error: 'Conversation not found' });
+  }
+
+  res.json(conversation);
+}));
+
+// List conversations (optionally filtered by source)
+app.get('/api/conversations', asyncHandler(async (req, res) => {
+  const userId = req.query.userId || 'anonymous';
+  const limit = parseInt(req.query.limit) || 50;
+  const offset = parseInt(req.query.offset) || 0;
+
+  const conversations = await db.listConversations(userId, limit, offset);
+  res.json(conversations);
+}));
+
+// ============ EXISTING ENDPOINTS ============
+
 app.get('/api/health', (req, res) => {
   const apiKey = process.env.XAI_API_KEY;
-  res.json({ 
+  res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
     hasApiKey: !!apiKey,
@@ -223,6 +378,109 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+
+// ============ BACKGROUND PROCESSING ============
+
+/**
+ * Process conversations asynchronously
+ */
+async function processConversationsAsync(importId, userId, conversations, filePath) {
+  try {
+    let processed = 0;
+
+    for (const conversation of conversations) {
+      try {
+        // Validate conversation
+        if (!validateConversation(conversation)) {
+          console.warn(`Skipping invalid conversation: ${conversation.originalId}`);
+          continue;
+        }
+
+        // Import conversation to database
+        const conversationId = await db.importChatGPTConversation(
+          importId,
+          userId,
+          conversation,
+          conversation.messages,
+          conversation.originalId,
+          conversation.originalTitle
+        );
+
+        // Analyze conversation
+        try {
+          const analysis = await analyzeConversation(conversation);
+
+          // Save analysis
+          await db.createAnalysis(
+            conversationId,
+            analysis.summary,
+            analysis.mainTopics,
+            analysis.sentiment,
+            analysis.complexityScore
+          );
+
+          // Get analysis ID for insights
+          const analysisResult = await db.initDatabase().query(
+            'SELECT id FROM conversation_analyses WHERE conversation_id = $1',
+            [conversationId]
+          );
+
+          if (analysisResult.rows.length > 0) {
+            const analysisId = analysisResult.rows[0].id;
+
+            // Generate and save insights
+            const insights = await generateInsights(conversation, conversation.messages);
+            for (const insight of insights) {
+              await db.addInsight(
+                analysisId,
+                insight.insightType,
+                insight.title,
+                insight.description,
+                null,
+                insight.confidenceScore
+              );
+            }
+          }
+
+          // Categorize topics
+          const topics = await categorizeTopics(conversation);
+          for (const topic of topics) {
+            const topicRecord = await db.createOrGetTopic(topic.name, topic.description);
+            await db.linkConversationToTopic(conversationId, topicRecord.id, topic.relevanceScore);
+          }
+
+        } catch (analysisError) {
+          console.error(`Error analyzing conversation ${conversationId}:`, analysisError);
+          // Continue processing even if analysis fails
+        }
+
+        processed++;
+
+        // Update progress
+        await db.updateImportStatus(importId, 'processing', conversations.length, processed);
+
+      } catch (convError) {
+        console.error(`Error processing conversation ${conversation.originalId}:`, convError);
+        // Continue with next conversation
+      }
+    }
+
+    // Mark import as completed
+    await db.updateImportStatus(importId, 'completed', conversations.length, processed);
+
+    // Clean up uploaded file
+    await fs.unlink(filePath).catch(() => {});
+
+    console.log(`✅ Import ${importId} completed: ${processed}/${conversations.length} conversations processed`);
+
+  } catch (error) {
+    console.error(`Error processing import ${importId}:`, error);
+    await db.updateImportStatus(importId, 'failed', 0, 0, error.message);
+
+    // Clean up file on error
+    await fs.unlink(filePath).catch(() => {});
+  }
+}
 
 // 404 handler - must be after all routes
 app.use(notFoundHandler);

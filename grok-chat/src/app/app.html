@@ -17,36 +17,54 @@
         
         <div class="flex gap-2 flex-wrap">
           <button
-            (click)="showSystemPrompt = !showSystemPrompt"
+            (click)="switchView('chat')"
             class="px-4 py-2 rounded-xl glass-effect hover:bg-white/10 transition-all duration-300 text-sm font-medium"
-            [class.bg-grok-purple/30]="showSystemPrompt"
+            [class.bg-grok-purple/30]="viewMode === 'chat'"
           >
-            ⚙️ System Prompt
+            💬 Chat
           </button>
-          
+
           <button
-            (click)="toggleComparisonMode()"
+            (click)="switchView('library')"
             class="px-4 py-2 rounded-xl glass-effect hover:bg-white/10 transition-all duration-300 text-sm font-medium"
-            [class.bg-grok-blue/30]="comparisonMode"
+            [class.bg-grok-purple/30]="viewMode === 'library'"
           >
-            🔀 A/B Test
+            📚 Library
           </button>
-          
-          <button
-            (click)="saveConversation()"
-            class="px-4 py-2 rounded-xl glass-effect hover:bg-white/10 transition-all duration-300 text-sm font-medium"
-            [disabled]="messages.length === 0"
-          >
-            💾 Save
-          </button>
-          
-          <button
-            (click)="exportConversation()"
-            class="px-4 py-2 rounded-xl glass-effect hover:bg-white/10 transition-all duration-300 text-sm font-medium"
-            [disabled]="messages.length === 0"
-          >
-            📥 Export
-          </button>
+
+          <div *ngIf="viewMode === 'chat'" class="flex gap-2 flex-wrap">
+            <button
+              (click)="showSystemPrompt = !showSystemPrompt"
+              class="px-4 py-2 rounded-xl glass-effect hover:bg-white/10 transition-all duration-300 text-sm font-medium"
+              [class.bg-grok-purple/30]="showSystemPrompt"
+            >
+              ⚙️ System Prompt
+            </button>
+
+            <button
+              (click)="toggleComparisonMode()"
+              class="px-4 py-2 rounded-xl glass-effect hover:bg-white/10 transition-all duration-300 text-sm font-medium"
+              [class.bg-grok-blue/30]="comparisonMode"
+            >
+              🔀 A/B Test
+            </button>
+
+            <button
+              (click)="saveConversation()"
+              class="px-4 py-2 rounded-xl glass-effect hover:bg-white/10 transition-all duration-300 text-sm font-medium"
+              [disabled]="messages.length === 0"
+            >
+              💾 Save
+            </button>
+
+            <button
+              (click)="exportConversation()"
+              class="px-4 py-2 rounded-xl glass-effect hover:bg-white/10 transition-all duration-300 text-sm font-medium"
+              [disabled]="messages.length === 0"
+            >
+              📥 Export
+            </button>
+          </div>
           
           <button
             (click)="clearChat()"
@@ -71,8 +89,10 @@
     </div>
   </header>
 
-  <!-- Error Display -->
-  <div *ngIf="error" class="max-w-7xl mx-auto mb-4 animate-slide-in">
+  <!-- CHAT VIEW -->
+  <div *ngIf="viewMode === 'chat'">
+    <!-- Error Display -->
+    <div *ngIf="error" class="max-w-7xl mx-auto mb-4 animate-slide-in">
     <div class="bg-red-500/10 border border-red-500/30 rounded-2xl p-4 backdrop-blur-xl">
       <div class="flex items-start gap-3">
         <span class="text-2xl">⚠️</span>
@@ -267,6 +287,16 @@
       </div>
     </div>
   </div>
+  </div>
+  <!-- END CHAT VIEW -->
+
+  <!-- LIBRARY VIEW -->
+  <div *ngIf="viewMode === 'library'">
+    <div class="max-w-7xl mx-auto">
+      <app-conversation-library></app-conversation-library>
+    </div>
+  </div>
+  <!-- END LIBRARY VIEW -->
 </div>
 
 <router-outlet />

@@ -1,0 +1,261 @@
+<div class="conversation-library">
+  <!-- Navigation Tabs -->
+  <div class="tabs">
+    <button
+      [class.active]="viewMode() === 'upload'"
+      (click)="goToUpload()"
+      class="tab-btn">
+      Upload Conversations
+    </button>
+    <button
+      [class.active]="viewMode() === 'topics' || viewMode() === 'conversations' || viewMode() === 'viewer'"
+      (click)="goToTopics()"
+      class="tab-btn">
+      Browse by Topic
+    </button>
+  </div>
+
+  <!-- Error Display -->
+  <div *ngIf="error()" class="error-banner">
+    {{ error() }}
+    <button (click)="error.set('')" class="close-btn">&times;</button>
+  </div>
+
+  <!-- Loading Indicator -->
+  <div *ngIf="isLoading()" class="loading-overlay">
+    <div class="spinner"></div>
+    <p>Loading...</p>
+  </div>
+
+  <!-- UPLOAD VIEW -->
+  <div *ngIf="viewMode() === 'upload'" class="view upload-view">
+    <h2>Upload ChatGPT Conversations</h2>
+
+    <div class="upload-section">
+      <div class="upload-box">
+        <div class="upload-icon">📁</div>
+        <h3>Upload your conversations.json file</h3>
+        <p>Export your ChatGPT conversations and upload them here for analysis</p>
+
+        <div class="file-input-wrapper">
+          <input
+            type="file"
+            id="fileInput"
+            accept=".json,application/json"
+            (change)="onFileSelected($event)"
+            class="file-input">
+          <label for="fileInput" class="file-input-label">
+            Choose File
+          </label>
+          <span *ngIf="selectedFile" class="filename">{{ selectedFile.name }}</span>
+        </div>
+
+        <button
+          (click)="uploadFile()"
+          [disabled]="!selectedFile || isLoading()"
+          class="btn btn-primary">
+          Upload & Analyze
+        </button>
+      </div>
+
+      <!-- Upload Progress -->
+      <div *ngIf="uploadProgress()" class="progress-section">
+        <h3>Processing Import</h3>
+        <div class="progress-info">
+          <div class="progress-stats">
+            <span class="stat">
+              <strong>Status:</strong>
+              <span [class]="'status-' + uploadProgress()!.status">
+                {{ uploadProgress()!.status }}
+              </span>
+            </span>
+            <span class="stat">
+              <strong>Progress:</strong>
+              {{ uploadProgress()!.processed_conversations }} / {{ uploadProgress()!.total_conversations }}
+            </span>
+            <span class="stat">
+              <strong>Filename:</strong> {{ uploadProgress()!.filename }}
+            </span>
+          </div>
+
+          <div class="progress-bar">
+            <div class="progress-fill" [style.width.%]="getProgressPercentage()"></div>
+          </div>
+          <div class="progress-percentage">{{ getProgressPercentage() }}%</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Recent Imports -->
+    <div *ngIf="imports().length > 0" class="recent-imports">
+      <h3>Recent Imports</h3>
+      <div class="imports-list">
+        <div *ngFor="let import of imports()" class="import-card">
+          <div class="import-header">
+            <strong>{{ import.filename }}</strong>
+            <span [class]="'status-badge status-' + import.status">
+              {{ import.status }}
+            </span>
+          </div>
+          <div class="import-details">
+            <span>{{ import.processed_conversations }} / {{ import.total_conversations }} conversations</span>
+            <span>{{ formatFileSize(import.file_size) }}</span>
+            <span>{{ formatDate(import.created_at) }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOPICS VIEW -->
+  <div *ngIf="viewMode() === 'topics'" class="view topics-view">
+    <h2>Browse Conversations by Topic</h2>
+
+    <div *ngIf="topics().length === 0" class="empty-state">
+      <p>No topics found. Upload some conversations to get started!</p>
+      <button (click)="goToUpload()" class="btn btn-primary">Upload Conversations</button>
+    </div>
+
+    <div class="topics-grid">
+      <div
+        *ngFor="let topic of topics()"
+        (click)="selectTopic(topic)"
+        class="topic-card">
+        <div class="topic-icon">{{ topic.icon || '💬' }}</div>
+        <h3>{{ topic.name }}</h3>
+        <p *ngIf="topic.description">{{ topic.description }}</p>
+        <div class="topic-count">
+          {{ topic.conversation_count }} conversation{{ topic.conversation_count !== 1 ? 's' : '' }}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CONVERSATIONS LIST VIEW -->
+  <div *ngIf="viewMode() === 'conversations'" class="view conversations-view">
+    <div class="view-header">
+      <button (click)="backToTopics()" class="btn btn-back">← Back to Topics</button>
+      <h2>{{ selectedTopic()?.name }}</h2>
+    </div>
+
+    <div class="conversations-list">
+      <div
+        *ngFor="let conv of conversations()"
+        (click)="selectConversation(conv)"
+        class="conversation-card">
+        <div class="conversation-header">
+          <h3>{{ conv.name }}</h3>
+          <span class="message-count">{{ conv.message_count || 0 }} messages</span>
+        </div>
+        <div class="conversation-meta">
+          <span class="date">{{ formatDate(conv.created_at) }}</span>
+          <span *ngIf="conv.source" class="source-badge">{{ conv.source }}</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CONVERSATION VIEWER -->
+  <div *ngIf="viewMode() === 'viewer' && selectedConversation()" class="view viewer-view">
+    <div class="view-header">
+      <button (click)="backToConversations()" class="btn btn-back">← Back to List</button>
+      <h2>{{ selectedConversation()!.name }}</h2>
+    </div>
+
+    <div class="viewer-content">
+      <!-- Analysis Panel -->
+      <div *ngIf="selectedConversation()!.analysis" class="analysis-panel">
+        <h3>Analysis</h3>
+
+        <div class="analysis-summary">
+          <h4>Summary</h4>
+          <p>{{ selectedConversation()!.analysis!.summary }}</p>
+        </div>
+
+        <div class="analysis-stats">
+          <div class="stat-card">
+            <div class="stat-label">Sentiment</div>
+            <div [class]="'stat-value ' + getSentimentColor(selectedConversation()!.analysis!.sentiment)">
+              {{ selectedConversation()!.analysis!.sentiment }}
+            </div>
+          </div>
+
+          <div class="stat-card">
+            <div class="stat-label">Complexity</div>
+            <div class="stat-value">
+              {{ getComplexityLabel(selectedConversation()!.analysis!.complexity_score) }}
+            </div>
+          </div>
+
+          <div class="stat-card">
+            <div class="stat-label">Topics</div>
+            <div class="stat-value">
+              {{ selectedConversation()!.analysis!.main_topics.join(', ') }}
+            </div>
+          </div>
+        </div>
+
+        <!-- Insights -->
+        <div *ngIf="selectedConversation()!.analysis!.insights && selectedConversation()!.analysis!.insights!.length > 0"
+             class="insights-section">
+          <h4>Insights</h4>
+
+          <!-- High Points -->
+          <div *ngIf="getInsightsByType(selectedConversation()!.analysis!.insights!, 'high_point').length > 0"
+               class="insight-group">
+            <h5 class="insight-group-title">🎯 High Points</h5>
+            <div *ngFor="let insight of getInsightsByType(selectedConversation()!.analysis!.insights!, 'high_point')"
+                 class="insight-card insight-high">
+              <div class="insight-header">
+                <strong>{{ insight.title }}</strong>
+                <span class="confidence">{{ (insight.confidence_score * 100).toFixed(0) }}%</span>
+              </div>
+              <p>{{ insight.description }}</p>
+            </div>
+          </div>
+
+          <!-- Low Points -->
+          <div *ngIf="getInsightsByType(selectedConversation()!.analysis!.insights!, 'low_point').length > 0"
+               class="insight-group">
+            <h5 class="insight-group-title">⚠️ Low Points</h5>
+            <div *ngFor="let insight of getInsightsByType(selectedConversation()!.analysis!.insights!, 'low_point')"
+                 class="insight-card insight-low">
+              <div class="insight-header">
+                <strong>{{ insight.title }}</strong>
+                <span class="confidence">{{ (insight.confidence_score * 100).toFixed(0) }}%</span>
+              </div>
+              <p>{{ insight.description }}</p>
+            </div>
+          </div>
+
+          <!-- Other Insights -->
+          <div class="insight-group">
+            <h5 class="insight-group-title">💡 Additional Insights</h5>
+            <div *ngFor="let insight of selectedConversation()!.analysis!.insights!.filter(i => i.insight_type !== 'high_point' && i.insight_type !== 'low_point')"
+                 class="insight-card">
+              <div class="insight-header">
+                <strong>{{ insight.title }}</strong>
+                <span class="insight-type">{{ insight.insight_type.replace('_', ' ') }}</span>
+                <span class="confidence">{{ (insight.confidence_score * 100).toFixed(0) }}%</span>
+              </div>
+              <p>{{ insight.description }}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Messages -->
+      <div class="messages-panel">
+        <h3>Conversation</h3>
+        <div class="messages-list">
+          <div *ngFor="let message of selectedConversation()!.messages"
+               [class]="'message message-' + message.role">
+            <div class="message-role">{{ message.role }}</div>
+            <div class="message-content">{{ message.content }}</div>
+            <div class="message-time">{{ formatDate(message.timestamp || '') }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
