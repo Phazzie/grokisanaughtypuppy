@@ -6,7 +6,7 @@ All notable changes to the Grok Chat application are documented in this file.
 
 ### 🐛 Bug Fixes
 - **Build Configuration**
-  - Fixed production build failure on Digital Ocean caused by overly restrictive Angular component style budgets
+  - Fixed production build failure on DigitalOcean caused by overly restrictive Angular component style budgets
   - Increased `anyComponentStyle` budget from 4 kB/8 kB to 15 kB/25 kB (warning/error)
   - Added `BUDGET-CONFIGURATION.md` documentation explaining rationale and standards
 
