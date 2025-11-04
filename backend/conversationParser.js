@@ -80,8 +80,33 @@ function extractMessagesFromMapping(mapping) {
   }
 
   if (!rootId) {
-    // If no root found, try to find the first valid message
-    rootId = Object.keys(mapping)[0];
+    // Fallback: Find the message with the earliest create_time
+    // or the one that is not referenced as a child by any other node
+    const allParents = new Set();
+    const nodeEntries = Object.entries(mapping);
+
+    // Collect all parent references
+    for (const [, node] of nodeEntries) {
+      if (node.parent) {
+        allParents.add(node.parent);
+      }
+    }
+
+    // Find a node that is not anyone's child and has the earliest timestamp
+    let earliestNode = null;
+    let earliestTime = Infinity;
+
+    for (const [id, node] of nodeEntries) {
+      if (!allParents.has(id)) {
+        const createTime = node.message?.create_time || Infinity;
+        if (createTime < earliestTime) {
+          earliestTime = createTime;
+          earliestNode = id;
+        }
+      }
+    }
+
+    rootId = earliestNode || nodeEntries[0]?.[0]; // Ultimate fallback to first entry
   }
 
   // Traverse the tree following the main conversation thread

@@ -444,6 +444,10 @@ async function listTopics(userId = null) {
     `;
 
     // If userId provided, only get topics for their conversations
+    // NOTE: This recalculates per-user topic counts on each request.
+    // For better performance with large datasets, consider adding a
+    // materialized view or separate per-user count tracking table.
+    // Current approach is acceptable for initial deployment.
     if (userId) {
       query = `
         SELECT DISTINCT t.*, COUNT(DISTINCT ct.conversation_id) as conversation_count
@@ -452,6 +456,7 @@ async function listTopics(userId = null) {
         JOIN conversations c ON ct.conversation_id = c.id
         WHERE c.user_id = $1
         GROUP BY t.id
+        HAVING COUNT(DISTINCT ct.conversation_id) > 0
         ORDER BY conversation_count DESC, t.name ASC
       `;
       const result = await pool.query(query, [userId]);

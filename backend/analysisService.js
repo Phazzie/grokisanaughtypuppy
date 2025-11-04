@@ -291,7 +291,10 @@ async function callGrokAPI(messages, temperature = 0.3) {
     return response.data.choices[0].message.content;
   } catch (error) {
     console.error('Grok API error:', error.response?.data || error.message);
-    throw new Error('Failed to call Grok API');
+    // Re-throw with context preserved
+    const errorMessage = error.response?.data?.error?.message || error.message;
+    const statusCode = error.response?.status;
+    throw new Error(`Failed to call Grok API${statusCode ? ` (${statusCode})` : ''}: ${errorMessage}`);
   }
 }
 
