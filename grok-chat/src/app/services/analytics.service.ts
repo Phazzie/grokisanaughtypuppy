@@ -302,7 +302,7 @@ export class AnalyticsService {
     }, {} as Record<string, number>);
 
     return Object.entries(wordCounts)
-      .sort(([, a], [, b]: [string, number]) => (b as number) - (a as number))
+      .sort(([, a], [, b]) => (b as number) - (a as number))
       .slice(0, 5)
       .map(([word]) => word);
   }

@@ -219,8 +219,10 @@ export class ConversationLibraryComponent implements OnInit {
     return Math.round((progress.processed_conversations / progress.total_conversations) * 100);
   }
 
-  formatDate(dateString: string): string {
-    const date = new Date(dateString);
+  formatDate(dateString: string | Date): string {
+    if (!dateString) return 'N/A';
+    const date = typeof dateString === 'string' ? new Date(dateString) : dateString;
+    if (isNaN(date.getTime())) return 'Invalid Date';
     return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
   }
 
@@ -232,6 +234,10 @@ export class ConversationLibraryComponent implements OnInit {
 
   getInsightsByType(insights: Insight[], type: string): Insight[] {
     return insights.filter(i => i.insight_type === type);
+  }
+
+  getAdditionalInsights(insights: Insight[]): Insight[] {
+    return insights.filter(i => i.insight_type !== 'high_point' && i.insight_type !== 'low_point');
   }
 
   getSentimentColor(sentiment: string): string {

@@ -231,7 +231,7 @@
           <!-- Other Insights -->
           <div class="insight-group">
             <h5 class="insight-group-title">💡 Additional Insights</h5>
-            <div *ngFor="let insight of selectedConversation()!.analysis!.insights!.filter(i => i.insight_type !== 'high_point' && i.insight_type !== 'low_point')"
+            <div *ngFor="let insight of getAdditionalInsights(selectedConversation()!.analysis!.insights!)"
                  class="insight-card">
               <div class="insight-header">
                 <strong>{{ insight.title }}</strong>
