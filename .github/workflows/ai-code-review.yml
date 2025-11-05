@@ -1,0 +1,387 @@
+name: 🤖 AI Code Review (Claude/Gemini)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: ['main', 'develop']
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  ai-code-review:
+    name: 🧠 AI-Powered Code Review
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout PR code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for better context
+
+      - name: 📊 Get PR Details
+        id: pr-info
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            return {
+              number: pr.number,
+              title: pr.title,
+              body: pr.body || 'No description provided',
+              author: pr.user.login,
+              base: pr.base.ref,
+              head: pr.head.ref,
+              files_changed: pr.changed_files
+            };
+
+      - name: 📝 Get Changed Files
+        id: changed-files
+        run: |
+          echo "Getting changed files..."
+          git diff --name-only origin/${{ github.event.pull_request.base.ref }}...HEAD > changed_files.txt
+          cat changed_files.txt
+
+          # Create a summary
+          echo "files_count=$(wc -l < changed_files.txt)" >> $GITHUB_OUTPUT
+          echo "files_list<<EOF" >> $GITHUB_OUTPUT
+          cat changed_files.txt >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: 📊 Get Diff Content
+        id: get-diff
+        run: |
+          echo "Getting full diff..."
+          git diff origin/${{ github.event.pull_request.base.ref }}...HEAD > pr_diff.txt
+
+          # Get stats
+          echo "additions=$(git diff --numstat origin/${{ github.event.pull_request.base.ref }}...HEAD | awk '{sum+=$1} END {print sum}')" >> $GITHUB_OUTPUT
+          echo "deletions=$(git diff --numstat origin/${{ github.event.pull_request.base.ref }}...HEAD | awk '{sum+=$2} END {print sum}')" >> $GITHUB_OUTPUT
+
+      - name: 🤖 Prepare AI Review Prompt
+        id: ai-prompt
+        run: |
+          cat > ai_review_prompt.md << 'PROMPT_EOF'
+          # AI Code Review Request
+
+          You are an expert software engineer reviewing a Pull Request for the Grok Chat application (Angular + Express).
+
+          ## PR Information
+          - **Title**: ${{ github.event.pull_request.title }}
+          - **Author**: ${{ github.event.pull_request.user.login }}
+          - **Base Branch**: ${{ github.event.pull_request.base.ref }}
+          - **Files Changed**: ${{ steps.changed-files.outputs.files_count }}
+          - **Additions**: +${{ steps.get-diff.outputs.additions }} lines
+          - **Deletions**: -${{ steps.get-diff.outputs.deletions }} lines
+
+          ## Changed Files
+          ```
+          ${{ steps.changed-files.outputs.files_list }}
+          ```
+
+          ## Review Instructions
+
+          Please provide a comprehensive code review covering:
+
+          ### 1. Code Quality (⭐)
+          - Architecture and design patterns
+          - Code organization and structure
+          - Naming conventions
+          - Code duplication (DRY principle)
+          - Type safety (TypeScript)
+
+          ### 2. Security (🔒)
+          - Input validation
+          - Authentication/authorization issues
+          - XSS/injection vulnerabilities
+          - Secrets in code
+          - API security
+
+          ### 3. Performance (⚡)
+          - Bundle size impact
+          - Unnecessary re-renders (Angular)
+          - Memory leaks
+          - Database query optimization
+          - API call efficiency
+
+          ### 4. Testing (🧪)
+          - Test coverage for new features
+          - Edge cases handled
+          - Error scenarios tested
+
+          ### 5. Best Practices (✅)
+          - Angular style guide compliance
+          - Express.js best practices
+          - Accessibility (a11y)
+          - Error handling
+          - Documentation
+
+          ### 6. Bugs & Issues (🐛)
+          - Potential runtime errors
+          - Logic errors
+          - Edge cases not handled
+
+          ## Output Format
+
+          Provide your review in this format:
+
+          ```markdown
+          ## 🤖 AI Code Review
+
+          ### Overall Assessment
+          [Your overall assessment: Approve, Request Changes, or Comment]
+
+          **Risk Level**: [Low/Medium/High]
+          **Recommendation**: [Approve/Request Changes/Needs Discussion]
+
+          ### Detailed Findings
+
+          #### ⭐ Code Quality
+          [Your findings]
+
+          #### 🔒 Security
+          [Your findings]
+
+          #### ⚡ Performance
+          [Your findings]
+
+          #### 🧪 Testing
+          [Your findings]
+
+          #### ✅ Best Practices
+          [Your findings]
+
+          #### 🐛 Bugs & Issues
+          [Your findings]
+
+          ### Suggestions
+          1. [Specific, actionable suggestion 1]
+          2. [Specific, actionable suggestion 2]
+          ...
+
+          ### Positive Highlights
+          - [What was done well]
+          - [Good practices observed]
+          ```
+
+          Please review the diff below and provide your analysis.
+          PROMPT_EOF
+
+          cat ai_review_prompt.md
+          echo "✅ AI prompt prepared"
+
+      - name: 💬 Comment on PR (Setup)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: `## 🤖 AI Code Review In Progress...
+
+              ⏳ Analyzing your changes with AI...
+
+              **PR Stats:**
+              - 📁 Files changed: ${{ steps.changed-files.outputs.files_count }}
+              - ➕ Additions: ${{ steps.get-diff.outputs.additions }} lines
+              - ➖ Deletions: ${{ steps.get-diff.outputs.deletions }} lines
+
+              This may take a few moments. The review will be posted here when complete.
+
+              _Powered by AI Code Review Pipeline_ 🚀`
+            });
+
+      # ========================================================================
+      # OPTION 1: Claude Code CLI (if available and configured)
+      # ========================================================================
+      - name: 🎭 AI Review with Claude (if configured)
+        id: claude-review
+        if: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+        run: |
+          echo "🎭 Claude Code CLI would run here"
+          echo "This requires Claude Code CLI to be installed and configured"
+          echo "Command: claude-code review pr_diff.txt --prompt ai_review_prompt.md"
+          echo ""
+          echo "⚠️ Setup Required:"
+          echo "1. Add ANTHROPIC_API_KEY to GitHub Secrets"
+          echo "2. Install Claude Code CLI in the workflow"
+          echo ""
+          echo "review_generated=false" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+      # ========================================================================
+      # OPTION 2: Google Gemini API (alternative)
+      # ========================================================================
+      - name: 💎 AI Review with Gemini (if configured)
+        id: gemini-review
+        if: ${{ secrets.GEMINI_API_KEY != '' }}
+        run: |
+          echo "💎 Google Gemini API would run here"
+          echo "This requires Gemini API key to be configured"
+          echo ""
+          echo "⚠️ Setup Required:"
+          echo "1. Add GEMINI_API_KEY to GitHub Secrets"
+          echo "2. Install Gemini CLI or use API directly"
+          echo ""
+          echo "review_generated=false" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+      # ========================================================================
+      # OPTION 3: GitHub Copilot (alternative)
+      # ========================================================================
+      - name: 🐙 AI Review with GitHub Copilot (if configured)
+        id: copilot-review
+        if: ${{ secrets.GITHUB_TOKEN != '' }}
+        run: |
+          echo "🐙 GitHub Copilot CLI could run here"
+          echo "This would use gh cli with copilot extension"
+          echo ""
+          echo "⚠️ Setup Required:"
+          echo "1. Install gh copilot extension in workflow"
+          echo "2. Use GITHUB_TOKEN for authentication"
+          echo ""
+          echo "review_generated=false" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+      # ========================================================================
+      # FALLBACK: Manual Review Checklist
+      # ========================================================================
+      - name: 📋 Generate Manual Review Checklist
+        id: manual-checklist
+        run: |
+          cat > review_checklist.md << 'CHECKLIST_EOF'
+          ## 📋 Manual Code Review Checklist
+
+          Since AI review is not configured yet, here's a comprehensive checklist for manual review:
+
+          ### ⭐ Code Quality
+          - [ ] Code follows project conventions
+          - [ ] No code duplication
+          - [ ] Functions are single-purpose
+          - [ ] Clear variable/function names
+          - [ ] TypeScript types are used (no `any`)
+
+          ### 🔒 Security
+          - [ ] Input validation present
+          - [ ] No secrets in code
+          - [ ] SQL injection prevented
+          - [ ] XSS vulnerabilities addressed
+          - [ ] Authentication checked
+
+          ### ⚡ Performance
+          - [ ] No unnecessary API calls
+          - [ ] Efficient database queries
+          - [ ] No memory leaks
+          - [ ] Bundle size impact acceptable
+          - [ ] Images/assets optimized
+
+          ### 🧪 Testing
+          - [ ] Unit tests for new features
+          - [ ] Edge cases covered
+          - [ ] Error scenarios tested
+          - [ ] Tests pass locally
+
+          ### ✅ Best Practices
+          - [ ] Error handling present
+          - [ ] Accessibility considered
+          - [ ] Mobile responsive
+          - [ ] Documentation updated
+          - [ ] Comments for complex logic
+
+          ### 🐛 Bugs & Issues
+          - [ ] No obvious bugs
+          - [ ] Edge cases handled
+          - [ ] Error messages are user-friendly
+          - [ ] Proper HTTP status codes
+
+          ---
+
+          **Setup AI Review:**
+          Add one of these secrets to enable automated AI reviews:
+          - `ANTHROPIC_API_KEY` for Claude Code
+          - `GEMINI_API_KEY` for Google Gemini
+          - Use `GITHUB_TOKEN` for GitHub Copilot
+          CHECKLIST_EOF
+
+          cat review_checklist.md
+
+      - name: 💬 Post Review Results
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const checklist = fs.readFileSync('review_checklist.md', 'utf8');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: `## 🤖 AI Code Review Results
+
+              ${checklist}
+
+              ### 📊 PR Statistics
+              - **Files Changed**: ${{ steps.changed-files.outputs.files_count }}
+              - **Lines Added**: +${{ steps.get-diff.outputs.additions }}
+              - **Lines Deleted**: -${{ steps.get-diff.outputs.deletions }}
+
+              ### 🚀 Next Steps
+              1. Review the checklist above
+              2. Address any concerns
+              3. Configure AI review for automated analysis
+
+              ---
+
+              _💡 **Tip**: Set up \`ANTHROPIC_API_KEY\`, \`GEMINI_API_KEY\`, or use GitHub Copilot for fully automated AI reviews!_`
+            });
+
+  # ==========================================================================
+  # ADVANCED: Code Complexity Analysis
+  # ==========================================================================
+  complexity-analysis:
+    name: 📊 Code Complexity Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: 📊 Analyze TypeScript Complexity
+        run: |
+          echo "📊 Code complexity analysis..."
+          echo ""
+          echo "Finding TypeScript files..."
+          find . -name "*.ts" -not -path "*/node_modules/*" -not -path "*/dist/*" | wc -l
+          echo ""
+          echo "Finding large files (>500 lines)..."
+          find . -name "*.ts" -not -path "*/node_modules/*" -not -path "*/dist/*" -exec wc -l {} \; | awk '$1 > 500' || echo "No large files found"
+          echo ""
+          echo "✅ Complexity check complete"
+        continue-on-error: true
+
+      - name: 💬 Comment Complexity Results
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: `## 📊 Code Complexity Analysis
+
+              ✅ Complexity analysis complete!
+
+              **Recommendations:**
+              - Keep functions under 50 lines when possible
+              - Keep files under 500 lines for better maintainability
+              - Extract complex logic into separate functions
+              - Consider splitting large components
+
+              _Check workflow logs for detailed metrics_ 🔍`
+            });

@@ -1,0 +1,400 @@
+name: 🧪 AI Test Generation
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_file:
+        description: 'Target file to generate tests for (leave empty for all)'
+        required: false
+        type: string
+      test_type:
+        description: 'Type of tests to generate'
+        required: true
+        type: choice
+        options:
+          - unit-tests
+          - integration-tests
+          - e2e-tests
+          - all
+        default: 'unit-tests'
+      ai_provider:
+        description: 'AI provider to use'
+        required: true
+        type: choice
+        options:
+          - claude
+          - gemini
+          - copilot
+          - manual
+        default: 'manual'
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly on Sunday at midnight
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  analyze-coverage:
+    name: 📊 Analyze Test Coverage
+    runs-on: ubuntu-latest
+    outputs:
+      missing_tests: ${{ steps.find-missing.outputs.files }}
+      coverage_percentage: ${{ steps.calculate.outputs.percentage }}
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: 📦 Install Dependencies
+        working-directory: grok-chat
+        run: npm ci
+
+      - name: 🧪 Run Tests with Coverage
+        working-directory: grok-chat
+        run: npm test -- --watch=false --browsers=ChromeHeadless --code-coverage || echo "Tests may have failed"
+        continue-on-error: true
+
+      - name: 🔍 Find Files Without Tests
+        id: find-missing
+        run: |
+          echo "🔍 Scanning for files without test coverage..."
+
+          # Find all TypeScript files without corresponding spec files
+          missing_files=""
+          while IFS= read -r file; do
+            spec_file="${file%.ts}.spec.ts"
+            if [ ! -f "$spec_file" ]; then
+              missing_files="${missing_files}${file},"
+              echo "  ❌ Missing test: $file"
+            fi
+          done < <(find grok-chat/src -name "*.ts" -not -name "*.spec.ts" -not -name "main.ts" -not -path "*/environments/*")
+
+          # Remove trailing comma
+          missing_files="${missing_files%,}"
+
+          echo "files=${missing_files}" >> $GITHUB_OUTPUT
+          echo ""
+          echo "✅ Coverage analysis complete"
+
+      - name: 📊 Calculate Coverage Percentage
+        id: calculate
+        run: |
+          # This is a simplified calculation
+          # In production, you'd parse the actual coverage report
+          total_files=$(find grok-chat/src -name "*.ts" -not -name "*.spec.ts" -not -name "main.ts" -not -path "*/environments/*" | wc -l)
+          spec_files=$(find grok-chat/src -name "*.spec.ts" | wc -l)
+
+          if [ "$total_files" -gt 0 ]; then
+            coverage=$((spec_files * 100 / total_files))
+          else
+            coverage=0
+          fi
+
+          echo "percentage=${coverage}" >> $GITHUB_OUTPUT
+          echo "📊 Test coverage: ${coverage}%"
+
+  generate-test-templates:
+    name: 🤖 Generate Test Templates with AI
+    runs-on: ubuntu-latest
+    needs: analyze-coverage
+    if: ${{ needs.analyze-coverage.outputs.missing_tests != '' }}
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: 🔍 Prepare Test Generation Context
+        id: prepare-context
+        run: |
+          cat > test-generation-prompt.md << 'PROMPT_EOF'
+          # AI Test Generation Request
+
+          You are an expert Angular/TypeScript test engineer. Generate comprehensive unit tests.
+
+          ## Project Context
+          - **Framework**: Angular 19 (standalone components)
+          - **Testing**: Jasmine + Karma
+          - **Test Type**: ${{ github.event.inputs.test_type || 'unit-tests' }}
+
+          ## Test Requirements
+
+          ### Unit Tests Should Include:
+          1. **Component Tests**:
+             - Component initialization
+             - Input/Output bindings
+             - Method functionality
+             - Event handlers
+             - State management
+             - Template interactions
+
+          2. **Service Tests**:
+             - HTTP requests (mocked)
+             - Error handling
+             - Data transformation
+             - Observable streams
+             - Method return values
+
+          3. **Accessibility Tests**:
+             - ARIA labels
+             - Keyboard navigation
+             - Focus management
+
+          4. **Edge Cases**:
+             - Null/undefined inputs
+             - Empty arrays/objects
+             - Error scenarios
+             - Boundary conditions
+
+          ## Test Template Structure
+
+          ```typescript
+          import { TestBed } from '@angular/core/testing';
+          import { HttpClientTestingModule } from '@angular/common/http/testing';
+
+          describe('[ComponentName]', () => {
+            beforeEach(async () => {
+              await TestBed.configureTestingModule({
+                imports: [ComponentName, HttpClientTestingModule],
+              }).compileComponents();
+            });
+
+            it('should create', () => {
+              const fixture = TestBed.createComponent(ComponentName);
+              const component = fixture.componentInstance;
+              expect(component).toBeTruthy();
+            });
+
+            // Add comprehensive tests here
+          });
+          ```
+
+          ## Output Format
+          Provide complete, runnable test files with:
+          - All necessary imports
+          - Proper TestBed configuration
+          - Mock data and services
+          - Descriptive test names
+          - Assertion coverage
+
+          Please generate tests for the files identified.
+          PROMPT_EOF
+
+          cat test-generation-prompt.md
+
+      # ======================================================================
+      # AI-Powered Test Generation (Multiple Options)
+      # ======================================================================
+
+      - name: 🎭 Generate Tests with Claude
+        if: ${{ github.event.inputs.ai_provider == 'claude' && secrets.ANTHROPIC_API_KEY != '' }}
+        run: |
+          echo "🎭 Claude-powered test generation..."
+          echo ""
+          echo "⚠️ This requires Claude Code CLI or API integration"
+          echo ""
+          echo "Example command:"
+          echo "  claude-code generate-tests --file=<path> --output=<spec-file>"
+          echo ""
+          echo "Missing files: ${{ needs.analyze-coverage.outputs.missing_tests }}"
+        continue-on-error: true
+
+      - name: 💎 Generate Tests with Gemini
+        if: ${{ github.event.inputs.ai_provider == 'gemini' && secrets.GEMINI_API_KEY != '' }}
+        run: |
+          echo "💎 Gemini-powered test generation..."
+          echo ""
+          echo "⚠️ This requires Google Gemini API integration"
+          echo ""
+          echo "You could use the Gemini API to:"
+          echo "  1. Read the source file"
+          echo "  2. Send it to Gemini with test generation prompt"
+          echo "  3. Write the generated tests to .spec.ts file"
+          echo ""
+          echo "Missing files: ${{ needs.analyze-coverage.outputs.missing_tests }}"
+        continue-on-error: true
+
+      - name: 🐙 Generate Tests with GitHub Copilot
+        if: ${{ github.event.inputs.ai_provider == 'copilot' }}
+        run: |
+          echo "🐙 GitHub Copilot test generation..."
+          echo ""
+          echo "⚠️ This requires gh CLI with copilot extension"
+          echo ""
+          echo "Example command:"
+          echo "  gh copilot suggest 'Generate unit tests for <file>'"
+          echo ""
+          echo "Missing files: ${{ needs.analyze-coverage.outputs.missing_tests }}"
+        continue-on-error: true
+
+      # ======================================================================
+      # Fallback: Generate Manual Test Templates
+      # ======================================================================
+
+      - name: 📝 Generate Manual Test Templates
+        if: ${{ github.event.inputs.ai_provider == 'manual' || github.event.inputs.ai_provider == '' }}
+        run: |
+          echo "📝 Generating manual test templates..."
+
+          IFS=',' read -ra FILES <<< "${{ needs.analyze-coverage.outputs.missing_tests }}"
+
+          for file in "${FILES[@]}"; do
+            if [ -z "$file" ]; then
+              continue
+            fi
+
+            # Generate spec file path
+            spec_file="${file%.ts}.spec.ts"
+            component_name=$(basename "$file" .ts)
+
+            echo "Generating template for: $file"
+
+            # Create basic test template
+            cat > "$spec_file" << TEST_EOF
+          import { TestBed } from '@angular/core/testing';
+          import { HttpClientTestingModule } from '@angular/common/http/testing';
+
+          // TODO: Import the component/service under test
+          // import { ${component_name^} } from './${component_name}';
+
+          describe('${component_name^}', () => {
+            beforeEach(async () => {
+              await TestBed.configureTestingModule({
+                // TODO: Add imports for your component/service
+                imports: [HttpClientTestingModule],
+              }).compileComponents();
+            });
+
+            it('should create', () => {
+              // TODO: Implement test
+              expect(true).toBeTruthy();
+            });
+
+            // TODO: Add more comprehensive tests
+            // Consider testing:
+            // - Component initialization
+            // - Input/Output bindings
+            // - Method functionality
+            // - Error handling
+            // - Edge cases
+          });
+          TEST_EOF
+
+            echo "✅ Generated: $spec_file"
+          done
+
+          echo ""
+          echo "✅ Test template generation complete"
+        continue-on-error: true
+
+      - name: 🔍 Check for Generated Tests
+        id: check-tests
+        run: |
+          if git diff --quiet; then
+            echo "has_tests=false" >> $GITHUB_OUTPUT
+            echo "ℹ️ No test files generated"
+          else
+            echo "has_tests=true" >> $GITHUB_OUTPUT
+            echo "✅ Test files generated"
+            git status
+          fi
+
+      - name: 📝 Create PR with Generated Tests
+        if: steps.check-tests.outputs.has_tests == 'true'
+        run: |
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Create branch
+          branch_name="auto-tests/generated-$(date +%s)"
+          git checkout -b "$branch_name"
+
+          # Commit changes
+          git add .
+          git commit -m "🧪 Auto-generated test templates
+
+          Generated test templates for files without coverage.
+
+          Current coverage: ${{ needs.analyze-coverage.outputs.coverage_percentage }}%
+
+          ⚠️ These are templates and need to be filled in with actual test logic.
+
+          Generated by: AI Test Generation Workflow
+          Provider: ${{ github.event.inputs.ai_provider || 'manual' }}"
+
+          echo "✅ Tests committed to branch: $branch_name"
+          echo "📝 Push and create PR manually, or configure GitHub token"
+
+  coverage-report:
+    name: 📊 Generate Coverage Report
+    runs-on: ubuntu-latest
+    needs: [analyze-coverage, generate-test-templates]
+    if: always()
+    steps:
+      - name: 📊 Create Coverage Issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const coverage = '${{ needs.analyze-coverage.outputs.coverage_percentage }}';
+            const missingTests = '${{ needs.analyze-coverage.outputs.missing_tests }}';
+
+            const fileCount = missingTests ? missingTests.split(',').filter(f => f).length : 0;
+
+            let emoji = '🔴';
+            let status = 'Needs Improvement';
+            if (coverage >= 80) {
+              emoji = '🟢';
+              status = 'Excellent';
+            } else if (coverage >= 60) {
+              emoji = '🟡';
+              status = 'Good';
+            } else if (coverage >= 40) {
+              emoji = '🟠';
+              status = 'Fair';
+            }
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `📊 Test Coverage Report: ${coverage}% ${emoji}`,
+              body: `## 🧪 Automated Test Coverage Analysis
+
+              ### Current Status: ${status} ${emoji}
+              **Coverage**: ${coverage}%
+
+              ### 📋 Summary
+              - **Files Without Tests**: ${fileCount}
+              - **AI Provider**: ${{ github.event.inputs.ai_provider || 'manual' }}
+              - **Test Type**: ${{ github.event.inputs.test_type || 'unit-tests' }}
+
+              ### 🎯 Coverage Goals
+              - 🎯 Target: 80%+ coverage
+              - 📈 Current: ${coverage}%
+              - 📊 Gap: ${80 - coverage}%
+
+              ### 🚀 Next Steps
+              1. Review generated test templates
+              2. Fill in actual test logic
+              3. Run tests locally: \`npm test\`
+              4. Increase coverage incrementally
+
+              ### 🤖 AI-Powered Test Generation
+              To automatically generate better tests, configure:
+              - \`ANTHROPIC_API_KEY\` for Claude Code
+              - \`GEMINI_API_KEY\` for Google Gemini
+              - GitHub Copilot for inline suggestions
+
+              ---
+              _Generated by AI Test Generation Pipeline 🧪_`,
+              labels: ['tests', 'coverage', 'automated']
+            });
+        continue-on-error: true

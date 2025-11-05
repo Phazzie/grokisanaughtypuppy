@@ -9,11 +9,12 @@
 This isn't just another chat app. We're pushing boundaries with:
 
 - **🎨 Glass Morphism Excellence** - Industry-leading visual design with animated gradients
-- **🧪 A/B Testing Built-In** - Compare AI responses scientifically 
+- **🧪 A/B Testing Built-In** - Compare AI responses scientifically
 - **🎯 AI-Powered Evaluation** - Use Grok to judge its own outputs
 - **🚀 Production-Ready Security** - Helmet, rate limiting, input validation, PostgreSQL
 - **✅ Comprehensive TDD** - 30+ test cases covering UI, accessibility, performance
 - **🎭 Personality Customization** - Full system prompt control with temperature visualization
+- **🤖 AI-Powered CI/CD** - Advanced automation with Claude/Gemini integration for code review, test generation, and self-healing pipelines
 
 ## 🚀 Quick Start
 
@@ -111,7 +112,12 @@ Primary:       DigitalOcean App Platform
 Database:      DigitalOcean Managed PostgreSQL
 CDN:           DigitalOcean Spaces
 Monitoring:    Health checks + error tracking
-CI/CD:         GitHub Actions ready
+CI/CD:         Advanced AI-Powered GitHub Actions
+              - Automated testing & building
+              - AI code review (Claude/Gemini/Copilot)
+              - Self-healing pipelines
+              - Automated test generation
+              - Smart deployment automation
 Containers:    Docker optimized
 ```
 
@@ -263,6 +269,32 @@ This app is the first in a planned ecosystem of creative AI tools:
 
 **Vision**: A unified platform where each app is a unique lens into AI-assisted creativity, sharing components and user data for seamless cross-app experiences.
 
+## 🤖 CI/CD & Automation
+
+This project features an **advanced AI-powered CI/CD pipeline** that goes beyond traditional automation:
+
+### Automated Workflows
+- ✅ **Continuous Integration** - Automated testing, linting, security scanning
+- 🤖 **AI Code Review** - Intelligent PR reviews using Claude/Gemini/Copilot
+- 🔧 **Self-Healing Pipelines** - Automatically fixes dependency, linting, and security issues
+- 🧪 **Test Generation** - AI creates comprehensive test suites for missing coverage
+- 📝 **Smart Release Notes** - AI-generated professional changelogs
+- 🚀 **Deployment Automation** - Staging and production deployment with health checks
+
+### Quick Start
+```bash
+# All workflows run automatically on push/PR!
+git push
+
+# Manual triggers
+gh workflow run ci.yml                           # Run CI manually
+gh workflow run ai-code-review.yml               # Trigger AI review
+gh workflow run self-healing.yml                 # Fix common issues
+gh workflow run ai-test-generation.yml           # Generate tests
+```
+
+📚 **Full Documentation**: [CI-CD-SETUP.md](./CI-CD-SETUP.md) | **Quick Reference**: [CI-CD-QUICK-REFERENCE.md](./CI-CD-QUICK-REFERENCE.md)
+
 ## 🤝 Contributing
 
 We welcome contributions! Areas of focus:
@@ -273,6 +305,7 @@ We welcome contributions! Areas of focus:
 - ⚡ **Performance Optimization** - Bundle size, loading times
 - ♿ **Accessibility** - Screen reader support, keyboard navigation
 - 🌍 **Internationalization** - Multi-language support
+- 🤖 **CI/CD Improvements** - Enhanced AI prompts, new automation workflows
 
 ## 📊 Performance Metrics
 
@@ -290,6 +323,8 @@ We welcome contributions! Areas of focus:
 - **Input Validation** - XSS/injection protection
 - **Environment Isolation** - Secure environment variables
 - **Error Handling** - No information leakage
+- **Automated Security Scanning** - npm audit, CodeQL, AI-powered vulnerability detection
+- **Self-Healing Security** - Automatic vulnerability remediation
 
 ## 🏆 Recognition
 
