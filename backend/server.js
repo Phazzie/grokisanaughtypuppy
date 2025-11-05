@@ -681,54 +681,44 @@ async function processConversationsAsync(importId, userId, conversations, filePa
 // Redirect /api/* to /api/v1/* for backward compatibility
 // This ensures existing clients continue to work
 
-app.post('/api/chat', (req, res, next) => {
-  req.url = '/api/v1/chat';
-  app._router.handle(req, res, next);
+app.post('/api/chat', (req, res) => {
+  res.redirect(307, '/api/v1/chat');
 });
 
-app.post('/api/evaluate', (req, res, next) => {
-  req.url = '/api/v1/evaluate';
-  app._router.handle(req, res, next);
+app.post('/api/evaluate', (req, res) => {
+  res.redirect(307, '/api/v1/evaluate');
 });
 
-app.post('/api/upload', (req, res, next) => {
-  req.url = '/api/v1/upload';
-  app._router.handle(req, res, next);
+app.post('/api/upload', (req, res) => {
+  res.redirect(307, '/api/v1/upload');
 });
 
-app.get('/api/health', (req, res, next) => {
-  req.url = '/api/v1/health';
-  app._router.handle(req, res, next);
+app.get('/api/health', (req, res) => {
+  res.redirect(307, '/api/v1/health');
 });
 
-app.get('/api/imports/:importId', (req, res, next) => {
-  req.url = `/api/v1/imports/${req.params.importId}`;
-  app._router.handle(req, res, next);
+app.get('/api/imports/:importId', (req, res) => {
+  res.redirect(307, `/api/v1/imports/${req.params.importId}`);
 });
 
-app.get('/api/imports', (req, res, next) => {
-  req.url = '/api/v1/imports';
-  app._router.handle(req, res, next);
+app.get('/api/imports', (req, res) => {
+  res.redirect(307, '/api/v1/imports');
 });
 
-app.get('/api/topics', (req, res, next) => {
-  req.url = '/api/v1/topics';
-  app._router.handle(req, res, next);
+app.get('/api/topics', (req, res) => {
+  res.redirect(307, '/api/v1/topics');
 });
 
-app.get('/api/topics/:topicId/conversations', (req, res, next) => {
-  req.url = `/api/v1/topics/${req.params.topicId}/conversations`;
-  app._router.handle(req, res, next);
+app.get('/api/topics/:topicId/conversations', (req, res) => {
+  res.redirect(307, `/api/v1/topics/${req.params.topicId}/conversations`);
 });
 
-app.get('/api/conversations/:conversationId', (req, res, next) => {
-  req.url = `/api/v1/conversations/${req.params.conversationId}`;
-  app._router.handle(req, res, next);
+app.get('/api/conversations/:conversationId', (req, res) => {
+  res.redirect(307, `/api/v1/conversations/${req.params.conversationId}`);
 });
 
-app.get('/api/conversations', (req, res, next) => {
-  req.url = '/api/v1/conversations';
-  app._router.handle(req, res, next);
+app.get('/api/conversations', (req, res) => {
+  res.redirect(307, '/api/v1/conversations');
 });
 
 // 404 handler - must be after all routes

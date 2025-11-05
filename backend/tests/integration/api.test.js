@@ -20,7 +20,6 @@ jest.mock('../../db', () => ({
 }));
 
 jest.mock('axios');
-const axios = require('axios');
 
 describe('API Integration Tests', () => {
   let app;
@@ -41,7 +40,7 @@ describe('API Integration Tests', () => {
 
     // Mock chat endpoint
     app.post('/api/chat', (req, res) => {
-      const { messages, systemPrompt, temperature } = req.body;
+      const { messages } = req.body;
 
       if (!messages || !Array.isArray(messages)) {
         return res.status(400).json({ error: 'Messages array is required' });
@@ -61,7 +60,7 @@ describe('API Integration Tests', () => {
 
     // Mock evaluation endpoint
     app.post('/api/evaluate', (req, res) => {
-      const { outputs, criteria, context } = req.body;
+      const { outputs } = req.body;
 
       if (!outputs || !Array.isArray(outputs)) {
         return res.status(400).json({ error: 'Outputs array is required' });
