@@ -1,0 +1,349 @@
+name: 🤖 Autonomous Code Improvement Agent
+
+# UNCONVENTIONAL: AI autonomously improves code without being asked
+# Hunts for TODOs, FIXMEs, tech debt, and implements fixes
+# Creates PRs with improvements for human review
+
+on:
+  schedule:
+    - cron: '0 2 * * 1'  # Weekly on Monday 2 AM
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Improvement mode'
+        required: true
+        type: choice
+        options:
+          - todo-hunter
+          - tech-debt-resolver
+          - performance-optimizer
+          - security-hardener
+          - test-coverage-booster
+          - documentation-improver
+          - all
+        default: 'all'
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  # ==========================================================================
+  # HUNT FOR IMPROVEMENT OPPORTUNITIES
+  # ==========================================================================
+  find-opportunities:
+    name: 🔍 Find Improvement Opportunities
+    runs-on: ubuntu-latest
+    outputs:
+      opportunities: ${{ steps.scan.outputs.result }}
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔍 Scan for TODOs, FIXMEs, and Technical Debt
+        id: scan
+        run: |
+          # Find all TODOs, FIXMEs, HACKs, etc.
+          grep -r "TODO\|FIXME\|HACK\|XXX\|OPTIMIZE" \
+            --include="*.ts" --include="*.js" --include="*.html" --include="*.scss" \
+            --exclude-dir=node_modules --exclude-dir=dist \
+            . > todos.txt || echo "No TODOs found"
+
+          # Find files with poor test coverage
+          find . -name "*.ts" -not -name "*.spec.ts" -not -path "*/node_modules/*" -not -path "*/dist/*" | \
+            while read file; do
+              spec_file="${file%.ts}.spec.ts"
+              if [ ! -f "$spec_file" ]; then
+                echo "MISSING_TEST: $file"
+              fi
+            done > missing_tests.txt
+
+          # Find large functions (over 50 lines)
+          find . -name "*.ts" -not -path "*/node_modules/*" -not -path "*/dist/*" | \
+            xargs -I {} sh -c 'awk "/^[[:space:]]*(function|const.*=>|.*\(.*\).*{)/{start=NR; fname=$0} /^[[:space:]]*}$/{if(NR-start>50) print FILENAME":"start":"fname}' {}' \
+            > large_functions.txt || echo "" > large_functions.txt
+
+          # Find duplicated code (simplified detection)
+          echo "DUPLICATE_DETECTION: Placeholder" > duplicates.txt
+
+          # Combine all opportunities
+          cat > opportunities.json << OPPS
+          {
+            "todos": $(cat todos.txt | jq -R -s -c 'split("\n")[:-1]'),
+            "missing_tests": $(cat missing_tests.txt | jq -R -s -c 'split("\n")[:-1]'),
+            "large_functions": $(cat large_functions.txt | jq -R -s -c 'split("\n")[:-1]'),
+            "duplicates": []
+          }
+          OPPS
+
+          cat opportunities.json
+
+          echo "result<<EOF" >> $GITHUB_OUTPUT
+          cat opportunities.json >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+  # ==========================================================================
+  # TODO HUNTER: Implement all TODOs and FIXMEs
+  # ==========================================================================
+  todo-hunter:
+    name: 🎯 TODO Hunter - Autonomous Implementation
+    runs-on: ubuntu-latest
+    needs: [find-opportunities]
+    if: ${{ github.event.inputs.mode == 'todo-hunter' || github.event.inputs.mode == 'all' }}
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: 🌿 Create improvement branch
+        run: |
+          BRANCH="ai-improvements/todo-hunter-$(date +%s)"
+          git checkout -b "$BRANCH"
+          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
+
+      - name: 🤖 AI TODO Implementation
+        env:
+          CLAUDE_CODE_API_KEY: ${{ secrets.CLAUDE_CODE_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        run: |
+          # Get first TODO to implement
+          TODO=$(grep -r "TODO" --include="*.ts" --exclude-dir=node_modules . | head -1)
+
+          if [ -z "$TODO" ]; then
+            echo "No TODOs found!"
+            exit 0
+          fi
+
+          FILE=$(echo "$TODO" | cut -d: -f1)
+          echo "Implementing TODO in: $FILE"
+
+          cat > todo_prompt.txt << 'IMPL'
+          You are an autonomous code improvement agent. Implement this TODO:
+
+          File: $FILE
+          TODO found: $TODO
+
+          Full file context:
+          $(cat "$FILE")
+
+          Instructions:
+          1. Understand the TODO's intent
+          2. Implement a production-ready solution
+          3. Follow existing code patterns
+          4. Add error handling
+          5. Output ONLY the complete, modified file content
+
+          NO explanations, NO markdown code blocks, ONLY the raw file content.
+          IMPL
+
+          # Use AI to implement
+          if [ -n "$CLAUDE_CODE_API_KEY" ]; then
+            claude -p "$(cat todo_prompt.txt)" > "${FILE}.new"
+          elif [ -n "$GOOGLE_API_KEY" ]; then
+            gemini -p "$(cat todo_prompt.txt)" --yolo > "${FILE}.new"
+          fi
+
+          # Backup and replace
+          if [ -f "${FILE}.new" ]; then
+            mv "$FILE" "${FILE}.backup"
+            mv "${FILE}.new" "$FILE"
+            echo "✅ Implemented TODO in $FILE"
+          fi
+
+      - name: 🧪 Generate Tests for Changes
+        env:
+          CLAUDE_CODE_API_KEY: ${{ secrets.CLAUDE_CODE_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        run: |
+          # Find modified file
+          MODIFIED=$(git diff --name-only | head -1)
+
+          if [ -n "$MODIFIED" ] && [[ "$MODIFIED" == *.ts ]]; then
+            SPEC_FILE="${MODIFIED%.ts}.spec.ts"
+
+            cat > test_prompt.txt << 'TEST'
+            Generate comprehensive tests for the changes made to:
+            $(cat "$MODIFIED")
+
+            Output ONLY the complete test file content. NO markdown, NO explanations.
+            TEST
+
+            if [ -n "$CLAUDE_CODE_API_KEY" ]; then
+              claude -p "$(cat test_prompt.txt)" > "$SPEC_FILE"
+            elif [ -n "$GOOGLE_API_KEY" ]; then
+              gemini -p "$(cat test_prompt.txt)" --yolo > "$SPEC_FILE"
+            fi
+
+            echo "✅ Generated tests: $SPEC_FILE"
+          fi
+
+      - name: ✅ Verify Changes
+        run: |
+          # Check if we made any actual changes
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "HAS_CHANGES=true" >> $GITHUB_ENV
+
+            git add .
+            git config user.name "Autonomous Improvement Bot"
+            git config user.email "ai-bot[bot]@users.noreply.github.com"
+
+            git commit -m "🤖 Auto-implement TODO
+
+            Autonomous code improvement agent implemented a TODO item.
+
+            - Analyzed existing code patterns
+            - Implemented production-ready solution
+            - Added error handling
+            - Generated corresponding tests
+
+            Human review recommended before merge."
+
+            echo "✅ Changes committed"
+          else
+            echo "HAS_CHANGES=false" >> $GITHUB_ENV
+            echo "No changes to commit"
+          fi
+
+      - name: 📤 Push and Create PR
+        if: env.HAS_CHANGES == 'true'
+        run: |
+          git push -u origin "$BRANCH"
+
+          gh pr create \
+            --title "🤖 Autonomous Improvement: Implement TODO" \
+            --body "## 🤖 Autonomous Code Improvement
+
+          This PR was created by the Autonomous Improvement Agent.
+
+          ### Changes Made
+          - ✅ Implemented a TODO item
+          - ✅ Generated corresponding tests
+          - ✅ Followed existing code patterns
+
+          ### Review Checklist
+          - [ ] Logic is correct and complete
+          - [ ] Tests are comprehensive
+          - [ ] No unintended side effects
+          - [ ] Code follows team conventions
+
+          ### Human Review Required
+          This is AI-generated code. Please review carefully before merging.
+
+          ---
+          _Generated by Autonomous Improvement Agent_ 🤖" \
+            --label "ai-generated,enhancement,automated"
+
+          echo "✅ PR created"
+
+  # ==========================================================================
+  # PERFORMANCE OPTIMIZER: Find and fix performance issues
+  # ==========================================================================
+  performance-optimizer:
+    name: ⚡ Performance Optimizer
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.mode == 'performance-optimizer' || github.event.inputs.mode == 'all' }}
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔍 Detect Performance Anti-Patterns
+        id: detect
+        run: |
+          # Look for common performance issues
+          grep -r "console.log\|debugger" --include="*.ts" --exclude-dir=node_modules . > debug_code.txt || echo "" > debug_code.txt
+          grep -r "for.*for.*for" --include="*.ts" --exclude-dir=node_modules . > nested_loops.txt || echo "" > nested_loops.txt
+
+          # Find synchronous file operations
+          grep -r "readFileSync\|writeFileSync" --include="*.ts" --exclude-dir=node_modules . > sync_ops.txt || echo "" > sync_ops.txt
+
+          # Find unbounded arrays
+          grep -r "\.push(" --include="*.ts" --exclude-dir=node_modules . > array_growth.txt || echo "" > array_growth.txt
+
+          cat > perf_issues.json << PERF
+          {
+            "debug_code": $(wc -l < debug_code.txt),
+            "nested_loops": $(wc -l < nested_loops.txt),
+            "sync_operations": $(wc -l < sync_ops.txt),
+            "potential_memory_leaks": $(wc -l < array_growth.txt)
+          }
+          PERF
+
+          cat perf_issues.json
+
+      - name: 🤖 AI Performance Analysis
+        env:
+          CLAUDE_CODE_API_KEY: ${{ secrets.CLAUDE_CODE_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        run: |
+          cat > perf_prompt.txt << 'PERF'
+          You are a performance optimization expert. Analyze this codebase:
+
+          Debug code found: $(cat debug_code.txt | head -20)
+          Nested loops: $(cat nested_loops.txt | head -20)
+          Sync operations: $(cat sync_ops.txt | head -20)
+
+          Provide specific optimizations:
+          1. Which files should be optimized first?
+          2. What are the quick wins?
+          3. Generate optimized code for top 3 issues
+
+          Output JSON:
+          {
+            "priority_files": ["file:line - reason"],
+            "quick_wins": ["improvement 1", "improvement 2"],
+            "optimizations": [
+              {"file": "...", "original": "...", "optimized": "...", "impact": "..."}
+            ]
+          }
+          PERF
+
+          if [ -n "$CLAUDE_CODE_API_KEY" ]; then
+            claude -p "$(cat perf_prompt.txt)" --output-format stream-json > optimizations.json
+          elif [ -n "$GOOGLE_API_KEY" ]; then
+            gemini -p "$(cat perf_prompt.txt)" --yolo --format json > optimizations.json
+          else
+            echo '{"priority_files":[],"quick_wins":[],"optimizations":[]}' > optimizations.json
+          fi
+
+          cat optimizations.json
+
+      - name: 📊 Create Performance Report
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const issues = JSON.parse(fs.readFileSync('perf_issues.json', 'utf8'));
+            const opts = JSON.parse(fs.readFileSync('optimizations.json', 'utf8'));
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '⚡ Performance Optimization Opportunities Detected',
+              body: `## ⚡ Performance Analysis Report
+
+          ### Issues Detected
+          - 🐛 Debug code in production: ${issues.debug_code} instances
+          - 🔄 Nested loops: ${issues.nested_loops} instances
+          - ⏱️ Synchronous operations: ${issues.sync_operations} instances
+          - 💾 Potential memory leaks: ${issues.potential_memory_leaks} instances
+
+          ### Priority Files
+          ${opts.priority_files.map(f => `- ${f}`).join('\n')}
+
+          ### Quick Wins
+          ${opts.quick_wins.map(w => `- [ ] ${w}`).join('\n')}
+
+          ### Suggested Optimizations
+          ${opts.optimizations.map(o => `
+          #### ${o.file}
+          **Impact**: ${o.impact}
+          **Original**: \`${o.original}\`
+          **Optimized**: \`${o.optimized}\`
+          `).join('\n')}
+
+          ---
+          _Generated by Autonomous Performance Optimizer_ ⚡`,
+              labels: ['performance', 'ai-generated', 'enhancement']
+            });

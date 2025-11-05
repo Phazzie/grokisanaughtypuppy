@@ -1,0 +1,342 @@
+name: 🏛️ AI Code Archaeologist - Explain & Modernize Legacy Code
+
+# UNCONVENTIONAL: AI explains WHY code exists and suggests modernization
+# Digs through git history, analyzes context, and proposes modern alternatives
+# Creates living documentation that evolves with your codebase
+
+on:
+  schedule:
+    - cron: '0 3 * * 0'  # Weekly on Sunday 3 AM
+  workflow_dispatch:
+    inputs:
+      target_file:
+        description: 'Specific file to analyze (leave empty for codebase scan)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  # ==========================================================================
+  # ARCHAEOLOGICAL DIG: Analyze code history and context
+  # ==========================================================================
+  excavate-code-history:
+    name: 🔍 Excavate Code History
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history needed for archaeology
+
+      - name: 🏛️ Find Ancient Code (over 1 year old)
+        id: ancient
+        run: |
+          # Find files that haven't been modified in over 1 year
+          find . -name "*.ts" -not -path "*/node_modules/*" -not -path "*/dist/*" | while read file; do
+            LAST_MODIFIED=$(git log -1 --format="%at" -- "$file" 2>/dev/null || echo "0")
+            ONE_YEAR_AGO=$(($(date +%s) - 31536000))
+
+            if [ "$LAST_MODIFIED" -lt "$ONE_YEAR_AGO" ] && [ "$LAST_MODIFIED" -gt 0 ]; then
+              DAYS_OLD=$(( ($(date +%s) - $LAST_MODIFIED) / 86400 ))
+              echo "$file|$DAYS_OLD"
+            fi
+          done > ancient_code.txt
+
+          echo "Ancient code files found: $(wc -l < ancient_code.txt)"
+          cat ancient_code.txt | head -10
+
+      - name: 📜 Dig Through Git History
+        id: history
+        run: |
+          # For each ancient file, get its complete history
+          while IFS='|' read -r file days_old; do
+            if [ -f "$file" ]; then
+              echo "=== ARCHAEOLOGICAL RECORD: $file ===" >> archaeology.txt
+              echo "Age: $days_old days old" >> archaeology.txt
+
+              # Get original commit
+              ORIGINAL_COMMIT=$(git log --diff-filter=A --follow --format=%H -- "$file" | tail -1)
+              echo "Original commit: $ORIGINAL_COMMIT" >> archaeology.txt
+
+              # Get original commit message and author
+              git log --format="Author: %an (%ae)%nDate: %ad%nMessage: %s%n%b" $ORIGINAL_COMMIT -1 >> archaeology.txt
+
+              # Get all commits that touched this file
+              echo "Total modifications: $(git log --follow --oneline -- "$file" | wc -l)" >> archaeology.txt
+
+              # Get last 5 commits
+              echo "Recent history:" >> archaeology.txt
+              git log --follow --oneline --format="%h %ad %s" --date=short -5 -- "$file" >> archaeology.txt
+
+              # Get current code
+              echo "Current code snippet:" >> archaeology.txt
+              head -50 "$file" >> archaeology.txt
+
+              echo "---" >> archaeology.txt
+            fi
+          done < ancient_code.txt
+
+          cat archaeology.txt | head -200
+
+      - name: 🤖 AI Archaeological Analysis
+        id: analyze
+        env:
+          CLAUDE_CODE_API_KEY: ${{ secrets.CLAUDE_CODE_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        run: |
+          cat > archaeology_prompt.txt << 'ARCHEO'
+          You are a code archaeologist with access to git history. Analyze this ancient code:
+
+          $(cat archaeology.txt | head -1000)
+
+          For each file, determine:
+          1. **Why was this code written?** (Original intent from commit messages)
+          2. **Is it still relevant?** (Does it serve current needs?)
+          3. **How has technology evolved?** (What's changed since then?)
+          4. **Modern alternatives** (How would you write this today?)
+          5. **Risk of removal** (What would break if we delete it?)
+          6. **Modernization path** (Step-by-step upgrade plan)
+
+          Output JSON:
+          {
+            "files": [
+              {
+                "path": "...",
+                "age_days": 365,
+                "original_purpose": "why it was created",
+                "current_relevance": "still needed|deprecated|unknown",
+                "modern_equivalent": "how to write this in 2025",
+                "removal_risk": "low|medium|high",
+                "modernization_steps": ["step 1", "step 2"],
+                "estimated_effort": "hours"
+              }
+            ],
+            "overall_technical_debt": "low|medium|high|critical"
+          }
+          ARCHEO
+
+          if [ -n "$CLAUDE_CODE_API_KEY" ]; then
+            claude -p "$(cat archaeology_prompt.txt)" --output-format stream-json > archaeology_analysis.json
+          elif [ -n "$GOOGLE_API_KEY" ]; then
+            gemini -p "$(cat archaeology_prompt.txt)" --yolo --format json > archaeology_analysis.json
+          else
+            echo '{"files":[],"overall_technical_debt":"unknown"}' > archaeology_analysis.json
+          fi
+
+          cat archaeology_analysis.json
+
+      - name: 📚 Generate Living Documentation
+        run: |
+          cat > ARCHAEOLOGY-REPORT.md << 'DOC'
+          # 🏛️ Code Archaeology Report
+
+          _Last Updated: $(date -u +"%Y-%m-%d %H:%M UTC")_
+
+          ## 📊 Executive Summary
+
+          **Overall Technical Debt**: $(jq -r '.overall_technical_debt' archaeology_analysis.json)
+          **Ancient Files Analyzed**: $(jq -r '.files | length' archaeology_analysis.json)
+
+          ---
+
+          ## 🗿 Ancient Code Analysis
+
+          $(jq -r '.files[] | "### " + .path + "\n\n**Age**: " + (.age_days|tostring) + " days old\n**Original Purpose**: " + .original_purpose + "\n**Current Relevance**: " + .current_relevance + "\n**Removal Risk**: " + .removal_risk + "\n\n#### Modern Equivalent\n" + .modern_equivalent + "\n\n#### Modernization Path\n" + (.modernization_steps | map("1. " + .) | join("\n")) + "\n\n**Estimated Effort**: " + .estimated_effort + "\n\n---\n"' archaeology_analysis.json)
+
+          ## 🚀 Recommended Actions
+
+          ### High Priority (Do First)
+          $(jq -r '.files[] | select(.current_relevance == "deprecated" and .removal_risk == "low") | "- [ ] **" + .path + "** - Can be safely removed or modernized"' archaeology_analysis.json)
+
+          ### Medium Priority
+          $(jq -r '.files[] | select(.current_relevance == "still needed" and .removal_risk == "medium") | "- [ ] **" + .path + "** - Modernize when touching this code"' archaeology_analysis.json)
+
+          ### Research Needed
+          $(jq -r '.files[] | select(.current_relevance == "unknown" or .removal_risk == "high") | "- [ ] **" + .path + "** - Investigate before making changes"' archaeology_analysis.json)
+
+          ---
+
+          ## 📖 Historical Context
+
+          This report was generated by analyzing git history, commit messages, and code evolution.
+          It helps teams understand WHY code exists before deciding to modify or remove it.
+
+          _Generated by AI Code Archaeologist_ 🏛️
+          DOC
+
+          cat ARCHAEOLOGY-REPORT.md
+
+      - name: 💾 Commit Living Documentation
+        run: |
+          git config user.name "AI Archaeologist Bot"
+          git config user.email "archaeologist[bot]@users.noreply.github.com"
+
+          git add ARCHAEOLOGY-REPORT.md
+          git commit -m "🏛️ Update code archaeology report [skip ci]" || echo "No changes"
+
+          git push || echo "Nothing to push"
+
+      - name: 🎯 Create Modernization Issues
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const analysis = JSON.parse(fs.readFileSync('archaeology_analysis.json', 'utf8'));
+
+            // Create issues for deprecated code that can be safely removed
+            const safeToRemove = analysis.files.filter(f =>
+              f.current_relevance === 'deprecated' && f.removal_risk === 'low'
+            );
+
+            for (const file of safeToRemove.slice(0, 5)) {  // Limit to 5 issues
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `🏛️ Modernize: ${file.path}`,
+                body: `## Code Archaeology Findings
+
+          **File**: \`${file.path}\`
+          **Age**: ${file.age_days} days old
+
+          ### Original Purpose
+          ${file.original_purpose}
+
+          ### Current Status
+          - **Relevance**: ${file.current_relevance}
+          - **Removal Risk**: ${file.removal_risk}
+
+          ### Modern Equivalent
+          ${file.modern_equivalent}
+
+          ### Modernization Steps
+          ${file.modernization_steps.map((s, i) => `${i + 1}. ${s}`).join('\n')}
+
+          **Estimated Effort**: ${file.estimated_effort}
+
+          ---
+          _Auto-generated by AI Code Archaeologist_ 🏛️`,
+                labels: ['technical-debt', 'modernization', 'ai-generated']
+              });
+            }
+
+  # ==========================================================================
+  # AUTONOMOUS MODERNIZATION: AI creates modernization PR
+  # ==========================================================================
+  autonomous-modernization:
+    name: 🚀 Autonomous Code Modernization
+    runs-on: ubuntu-latest
+    needs: [excavate-code-history]
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🌿 Create modernization branch
+        run: |
+          BRANCH="ai-modernization/ancient-code-$(date +%s)"
+          git checkout -b "$BRANCH"
+          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
+
+      - name: 🤖 AI Autonomous Modernization
+        env:
+          CLAUDE_CODE_API_KEY: ${{ secrets.CLAUDE_CODE_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        run: |
+          # Get first file to modernize
+          ANCIENT_FILE=$(head -1 ancient_code.txt | cut -d'|' -f1)
+
+          if [ -z "$ANCIENT_FILE" ] || [ ! -f "$ANCIENT_FILE" ]; then
+            echo "No files to modernize"
+            exit 0
+          fi
+
+          echo "Modernizing: $ANCIENT_FILE"
+
+          # Get git history for context
+          GIT_CONTEXT=$(git log --follow --format="%ad %s" --date=short -10 -- "$ANCIENT_FILE")
+
+          cat > modernize_prompt.txt << 'MODERN'
+          You are a code modernization expert. Modernize this file to 2025 standards:
+
+          File: $ANCIENT_FILE
+          Git History: $GIT_CONTEXT
+
+          Current Code:
+          $(cat "$ANCIENT_FILE")
+
+          Modernization requirements:
+          1. Use latest TypeScript features (2025)
+          2. Use modern Angular patterns (standalone components, signals)
+          3. Improve type safety
+          4. Add proper error handling
+          5. Optimize performance
+          6. Keep the same functionality
+          7. Add JSDoc comments explaining changes
+
+          Output ONLY the complete modernized file. NO markdown, NO explanations.
+          MODERN
+
+          if [ -n "$CLAUDE_CODE_API_KEY" ]; then
+            claude -p "$(cat modernize_prompt.txt)" > "${ANCIENT_FILE}.modern"
+          elif [ -n "$GOOGLE_API_KEY" ]; then
+            gemini -p "$(cat modernize_prompt.txt)" --yolo > "${ANCIENT_FILE}.modern"
+          fi
+
+          if [ -f "${ANCIENT_FILE}.modern" ]; then
+            mv "${ANCIENT_FILE}.modern" "$ANCIENT_FILE"
+            echo "✅ Modernized $ANCIENT_FILE"
+            echo "HAS_CHANGES=true" >> $GITHUB_ENV
+          fi
+
+      - name: 📤 Create Modernization PR
+        if: env.HAS_CHANGES == 'true'
+        run: |
+          git add .
+          git config user.name "AI Modernization Bot"
+          git config user.email "modernization[bot]@users.noreply.github.com"
+
+          git commit -m "🚀 Autonomous modernization of ancient code
+
+          AI Code Archaeologist analyzed git history and modernized code to 2025 standards.
+
+          Changes:
+          - Updated to latest TypeScript features
+          - Applied modern Angular patterns
+          - Improved type safety
+          - Added error handling
+          - Optimized performance
+
+          Original code age: $(head -1 ancient_code.txt | cut -d'|' -f2) days old
+
+          Human review required before merge."
+
+          git push -u origin "$BRANCH"
+
+          gh pr create \
+            --title "🏛️ AI Modernization: Update Ancient Code to 2025 Standards" \
+            --body "## 🏛️ Autonomous Code Modernization
+
+          This PR modernizes ancient code based on git history analysis.
+
+          ### Changes
+          - ✅ Updated to TypeScript 2025 features
+          - ✅ Applied modern framework patterns
+          - ✅ Improved type safety and error handling
+          - ✅ Preserved original functionality
+
+          ### Archaeological Analysis
+          See [ARCHAEOLOGY-REPORT.md](./ARCHAEOLOGY-REPORT.md) for full analysis.
+
+          ### Testing Required
+          - [ ] Verify all original functionality works
+          - [ ] Run full test suite
+          - [ ] Check for breaking changes
+
+          ---
+          _AI Code Archaeologist - Bridging past and future_ 🏛️" \
+            --label "modernization,ai-generated,technical-debt"

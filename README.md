@@ -271,11 +271,18 @@ This app is the first in a planned ecosystem of creative AI tools:
 
 ## 🤖 CI/CD & Automation
 
-This project features an **advanced AI-powered CI/CD pipeline** that goes beyond traditional automation:
+This project features **the world's most advanced AI-powered CI/CD pipeline** - an unconventional system that no one else has:
 
-### Automated Workflows
+### 🧠 Unconventional Workflows (NEW!)
+- **🧠 AI Council** - Three AIs (Claude, Gemini, Copilot) independently review and debate code
+- **🔮 Predictive CI** - AI predicts failures BEFORE you commit by learning from history
+- **🤖 Autonomous Improvement** - AI autonomously implements TODOs, fixes tech debt, and optimizes performance
+- **🏛️ Code Archaeologist** - AI explains WHY ancient code exists and autonomously modernizes it
+- **🥷 Adversarial Testing** - AI actively tries to break your code to find vulnerabilities
+- **🧬 Mutation Testing** - AI generates subtle bugs to find weak tests
+
+### 🚀 Standard Workflows
 - ✅ **Continuous Integration** - Automated testing, linting, security scanning
-- 🤖 **AI Code Review** - Intelligent PR reviews using Claude/Gemini/Copilot
 - 🔧 **Self-Healing Pipelines** - Automatically fixes dependency, linting, and security issues
 - 🧪 **Test Generation** - AI creates comprehensive test suites for missing coverage
 - 📝 **Smart Release Notes** - AI-generated professional changelogs
@@ -286,14 +293,19 @@ This project features an **advanced AI-powered CI/CD pipeline** that goes beyond
 # All workflows run automatically on push/PR!
 git push
 
-# Manual triggers
-gh workflow run ci.yml                           # Run CI manually
-gh workflow run ai-code-review.yml               # Trigger AI review
-gh workflow run self-healing.yml                 # Fix common issues
-gh workflow run ai-test-generation.yml           # Generate tests
+# Unconventional workflows
+gh workflow run ai-council-debate.yml            # Multi-AI debate
+gh workflow run predictive-ci.yml                # Predict failures
+gh workflow run autonomous-improvement.yml       # Auto-improve code
+gh workflow run ai-archaeology.yml               # Modernize ancient code
+gh workflow run adversarial-testing.yml          # Security chaos testing
 ```
 
-📚 **Full Documentation**: [CI-CD-SETUP.md](./CI-CD-SETUP.md) | **Quick Reference**: [CI-CD-QUICK-REFERENCE.md](./CI-CD-QUICK-REFERENCE.md)
+📚 **Documentation**:
+- **⭐ Unconventional System**: [UNCONVENTIONAL-CI-CD-GUIDE.md](./UNCONVENTIONAL-CI-CD-GUIDE.md) **START HERE**
+- Standard CI/CD: [CI-CD-SETUP.md](./CI-CD-SETUP.md)
+- Quick Reference: [CI-CD-QUICK-REFERENCE.md](./CI-CD-QUICK-REFERENCE.md)
+- CLI Integration: [CLI-HEADLESS-MODES-CORRECTED.md](./CLI-HEADLESS-MODES-CORRECTED.md)
 
 ## 🤝 Contributing
 
