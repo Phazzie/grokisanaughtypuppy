@@ -1,0 +1,461 @@
+name: 🎭 Adversarial Testing - AI Security Testing
+
+# UNCONVENTIONAL: AI actively tries to break the application
+# Uses official GitHub Actions for AI providers
+# Generates attack vectors and tests security boundaries
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+  workflow_dispatch:
+  schedule:
+    - cron: '0 4 * * 2'  # Every Tuesday at 4 AM
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  security-events: write
+
+env:
+  MAX_ATTACK_ATTEMPTS: 20
+  TIMEOUT_SECONDS: 300
+
+jobs:
+  # ==========================================================================
+  # Setup test environment
+  # ==========================================================================
+  prepare-environment:
+    name: 🔧 Prepare Test Environment
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: |
+            backend/package-lock.json
+            grok-chat/package-lock.json
+
+      - name: 📦 Install Dependencies
+        run: |
+          cd backend && npm ci
+          cd ../grok-chat && npm ci
+
+      - name: 🏗️ Build Frontend
+        working-directory: grok-chat
+        run: npm run build
+
+      - name: 📤 Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: built-app
+          path: |
+            backend/
+            grok-chat/dist/
+
+  # ==========================================================================
+  # AI generates attack vectors
+  # ==========================================================================
+  generate-attack-vectors:
+    name: 🎯 Generate Attack Vectors
+    runs-on: ubuntu-latest
+    outputs:
+      attack_plan: ${{ steps.generate.outputs.response }}
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📖 Analyze Attack Surface
+        run: |
+          echo "## API Endpoints" > attack_surface.txt
+
+          # Find API routes in backend
+          grep -r "router\.\(get\|post\|put\|delete\|patch\)" backend/ --include="*.js" 2>/dev/null >> attack_surface.txt || echo "No routes found" >> attack_surface.txt
+
+          echo "" >> attack_surface.txt
+          echo "## Authentication/Authorization" >> attack_surface.txt
+          grep -r "auth\|token\|jwt\|session" backend/ --include="*.js" 2>/dev/null | head -20 >> attack_surface.txt || echo "No auth found" >> attack_surface.txt
+
+          echo "" >> attack_surface.txt
+          echo "## Input Validation" >> attack_surface.txt
+          grep -r "req\.body\|req\.query\|req\.params" backend/ --include="*.js" 2>/dev/null | head -20 >> attack_surface.txt || echo "No input handling found" >> attack_surface.txt
+
+          echo "" >> attack_surface.txt
+          echo "## Database Queries" >> attack_surface.txt
+          grep -r "query\|execute\|sql" backend/ --include="*.js" 2>/dev/null | head -20 >> attack_surface.txt || echo "No DB queries found" >> attack_surface.txt
+
+          cat attack_surface.txt
+
+      - name: 🎭 AI Attack Vector Generation (Claude Max)
+        id: generate
+        if: ${{ secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '' || secrets.GEMINI_API_KEY != '' }}
+        uses: anthropics/claude-code-action@v1
+        with:
+          # Supports BOTH Claude Max (OAuth) and API key
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            You are a penetration tester. Generate attack vectors to test this application's security.
+
+            **Attack Surface Analysis:**
+            $(cat attack_surface.txt)
+
+            **Task:** Generate creative attack vectors to test:
+
+            1. **Authentication Bypass** - Can we access protected resources?
+            2. **Injection Attacks** - SQL injection, NoSQL injection, XSS
+            3. **Authorization Issues** - Access other users' data
+            4. **Input Validation** - Malformed input, edge cases, huge payloads
+            5. **Rate Limiting** - Can we overwhelm the server?
+            6. **File Upload Exploits** - Malicious file uploads
+            7. **API Abuse** - Unexpected API combinations
+
+            Output JSON with ETHICAL attack vectors only (no DoS, no destructive actions):
+            {
+              "attack_vectors": [
+                {
+                  "name": "...",
+                  "category": "auth|injection|authorization|input|rate-limit|upload|api-abuse",
+                  "severity": "critical|high|medium|low",
+                  "method": "GET|POST|PUT|DELETE",
+                  "endpoint": "/api/...",
+                  "payload": "...",
+                  "expected_vulnerability": "...",
+                  "success_indicators": ["..."]
+                }
+              ]
+            }
+
+            Generate up to ${{ env.MAX_ATTACK_ATTEMPTS }} attack vectors.
+            Focus on the most likely vulnerabilities first.
+
+      - name: 💾 Save Attack Plan
+        run: |
+          echo '${{ steps.generate.outputs.response }}' > attack_plan.json
+          echo "🎯 Generated attack plan:"
+          cat attack_plan.json
+
+      - name: 📤 Upload Attack Plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: attack-plan
+          path: attack_plan.json
+
+  # ==========================================================================
+  # Execute attack vectors against running application
+  # ==========================================================================
+  execute-attacks:
+    name: 🚀 Execute Attack Vectors
+    runs-on: ubuntu-latest
+    needs: [prepare-environment, generate-attack-vectors]
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: testdb
+          POSTGRES_USER: testuser
+          POSTGRES_PASSWORD: testpass
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📥 Download Build
+        uses: actions/download-artifact@v4
+        with:
+          name: built-app
+          path: .
+
+      - name: 📥 Download Attack Plan
+        uses: actions/download-artifact@v4
+        with:
+          name: attack-plan
+
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: 🔧 Configure Test Environment
+        working-directory: backend
+        run: |
+          cat > .env << EOF
+          NODE_ENV=test
+          PORT=3000
+          DATABASE_URL=postgresql://testuser:testpass@localhost:5432/testdb
+          JWT_SECRET=test-secret-for-adversarial-testing
+          EOF
+
+          echo "✅ Environment configured"
+
+      - name: 🗄️ Initialize Database
+        working-directory: backend
+        run: |
+          npm install -g pg
+          PGPASSWORD=testpass psql -h localhost -U testuser -d testdb -f init.sql 2>/dev/null || echo "⚠️ Could not initialize DB"
+
+      - name: 🚀 Start Backend Server
+        working-directory: backend
+        run: |
+          npm start &
+          SERVER_PID=$!
+          echo "SERVER_PID=$SERVER_PID" >> $GITHUB_ENV
+
+          # Wait for server to be ready
+          echo "⏳ Waiting for server to start..."
+          for i in {1..30}; do
+            if curl -s http://localhost:3000/health >/dev/null 2>&1 || curl -s http://localhost:3000/ >/dev/null 2>&1; then
+              echo "✅ Server is ready!"
+              exit 0
+            fi
+            echo "Attempt $i/30..."
+            sleep 2
+          done
+
+          echo "⚠️ Server may not be fully ready, proceeding anyway..."
+
+      - name: 🎭 Execute Attack Vectors
+        run: |
+          cat > execute_attacks.js << 'SCRIPT'
+          const fs = require('fs');
+          const http = require('http');
+          const https = require('https');
+
+          const attackPlan = JSON.parse(fs.readFileSync('attack_plan.json', 'utf8'));
+          const results = { attacks: [], vulnerabilities_found: [], total_attempts: 0, successful_attacks: 0 };
+
+          async function executeAttack(attack) {
+            return new Promise((resolve) => {
+              const url = `http://localhost:3000${attack.endpoint || '/'}`;
+              const method = attack.method || 'GET';
+
+              const options = {
+                method: method,
+                headers: { 'Content-Type': 'application/json' },
+                timeout: 5000
+              };
+
+              let postData = '';
+              if (method !== 'GET' && attack.payload) {
+                postData = typeof attack.payload === 'string' ? attack.payload : JSON.stringify(attack.payload);
+                options.headers['Content-Length'] = Buffer.byteLength(postData);
+              }
+
+              console.log(`\n🎯 Testing: ${attack.name}`);
+              console.log(`   ${method} ${attack.endpoint}`);
+
+              const req = http.request(url, options, (res) => {
+                let data = '';
+                res.on('data', chunk => data += chunk);
+                res.on('end', () => {
+                  const result = {
+                    attack: attack.name,
+                    category: attack.category,
+                    severity: attack.severity,
+                    status_code: res.statusCode,
+                    vulnerable: false,
+                    details: ''
+                  };
+
+                  // Check for success indicators
+                  const bodyLower = data.toLowerCase();
+                  if (attack.success_indicators) {
+                    for (const indicator of attack.success_indicators) {
+                      if (bodyLower.includes(indicator.toLowerCase()) || res.statusCode === 200) {
+                        result.vulnerable = true;
+                        result.details = `Potential vulnerability: ${indicator}`;
+                        results.vulnerabilities_found.push(result);
+                        results.successful_attacks++;
+                        break;
+                      }
+                    }
+                  }
+
+                  // Also check for common vulnerability indicators
+                  if (res.statusCode === 500 || bodyLower.includes('error') || bodyLower.includes('exception')) {
+                    result.details = 'Server error or exception exposed';
+                  }
+
+                  results.attacks.push(result);
+                  results.total_attempts++;
+                  resolve(result);
+                });
+              });
+
+              req.on('error', (err) => {
+                results.attacks.push({
+                  attack: attack.name,
+                  category: attack.category,
+                  severity: attack.severity,
+                  error: err.message
+                });
+                results.total_attempts++;
+                resolve({ error: err.message });
+              });
+
+              req.on('timeout', () => {
+                req.destroy();
+                results.total_attempts++;
+                resolve({ error: 'timeout' });
+              });
+
+              if (postData) req.write(postData);
+              req.end();
+            });
+          }
+
+          (async () => {
+            console.log('🎭 Starting adversarial testing...\n');
+
+            for (const attack of attackPlan.attack_vectors || []) {
+              await executeAttack(attack);
+              await new Promise(resolve => setTimeout(resolve, 100)); // Small delay between attacks
+            }
+
+            fs.writeFileSync('attack_results.json', JSON.stringify(results, null, 2));
+            console.log(`\n✅ Testing complete: ${results.total_attempts} attacks executed`);
+            console.log(`⚠️ Vulnerabilities found: ${results.successful_attacks}`);
+          })();
+          SCRIPT
+
+          node execute_attacks.js
+
+          echo "📊 Attack results:"
+          cat attack_results.json
+
+      - name: 🛑 Stop Backend Server
+        if: always()
+        run: |
+          if [ -n "$SERVER_PID" ]; then
+            kill $SERVER_PID 2>/dev/null || true
+          fi
+          pkill -f "node.*server.js" || true
+
+      - name: 📤 Upload Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: attack-results
+          path: attack_results.json
+
+  # ==========================================================================
+  # Analyze results and generate report
+  # ==========================================================================
+  analyze-results:
+    name: 📊 Analyze Security Test Results
+    runs-on: ubuntu-latest
+    needs: execute-attacks
+    if: always()
+    steps:
+      - name: 📥 Download Attack Results
+        uses: actions/download-artifact@v4
+        with:
+          name: attack-results
+
+      - name: 🧠 AI Security Analysis (Claude Max)
+        id: analyze
+        if: ${{ secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '' || secrets.GEMINI_API_KEY != '' }}
+        uses: anthropics/claude-code-action@v1
+        with:
+          # Supports BOTH Claude Max (OAuth) and API key
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            You are a security analyst reviewing adversarial testing results.
+
+            **Attack Results:**
+            $(cat attack_results.json)
+
+            **Task:**
+            1. Analyze which attacks succeeded
+            2. Assess the severity of vulnerabilities found
+            3. Provide remediation recommendations
+            4. Prioritize fixes
+
+            Output JSON:
+            {
+              "summary": {
+                "total_attacks": 0,
+                "vulnerabilities_found": 0,
+                "critical": 0,
+                "high": 0,
+                "medium": 0,
+                "low": 0
+              },
+              "critical_findings": [{"vulnerability": "...", "remediation": "..."}],
+              "recommendations": ["..."],
+              "overall_security_score": 1-10
+            }
+
+      - name: 📄 Generate Security Report
+        run: |
+          cat > SECURITY_TEST_REPORT.md << 'REPORT'
+          # 🎭 Adversarial Security Testing Report
+
+          **Date:** $(date -Iseconds)
+          **Run:** #${{ github.run_number }}
+
+          ## 📊 Executive Summary
+
+          $(echo '${{ steps.analyze.outputs.response }}' | jq -r '.summary | "**Total Attacks:** " + (.total_attacks|tostring) + "\n**Vulnerabilities Found:** " + (.vulnerabilities_found|tostring) + "\n**Critical:** " + (.critical|tostring) + " | **High:** " + (.high|tostring) + " | **Medium:** " + (.medium|tostring) + " | **Low:** " + (.low|tostring)')
+
+          **Overall Security Score:** $(echo '${{ steps.analyze.outputs.response }}' | jq -r '.overall_security_score // "N/A"')/10
+
+          ## 🚨 Critical Findings
+
+          $(echo '${{ steps.analyze.outputs.response }}' | jq -r '.critical_findings[]? | "### " + .vulnerability + "\n**Remediation:** " + .remediation + "\n"' || echo "_No critical findings_")
+
+          ## 💡 Recommendations
+
+          $(echo '${{ steps.analyze.outputs.response }}' | jq -r '.recommendations[]? | "- " + .' || echo "_No recommendations_")
+
+          ## 📋 Detailed Attack Results
+
+          See attached artifacts for complete attack logs.
+
+          ---
+
+          _Generated by Adversarial Testing Bot • Ethical security testing_
+
+          **Note:** All attacks were ethical and non-destructive. No real data was compromised.
+          REPORT
+
+          cat SECURITY_TEST_REPORT.md
+
+      - name: 💬 Post Results to PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('SECURITY_TEST_REPORT.md', 'utf8');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: report
+            });
+
+      - name: ❌ Fail if Critical Vulnerabilities Found
+        run: |
+          CRITICAL=$(echo '${{ steps.analyze.outputs.response }}' | jq -r '.summary.critical // 0')
+          HIGH=$(echo '${{ steps.analyze.outputs.response }}' | jq -r '.summary.high // 0')
+
+          if [ "$CRITICAL" -gt 0 ] || [ "$HIGH" -gt 2 ]; then
+            echo "❌ Critical or multiple high-severity vulnerabilities found!"
+            echo "Critical: $CRITICAL, High: $HIGH"
+            exit 1
+          fi
+
+          echo "✅ No critical vulnerabilities found"

@@ -1,0 +1,357 @@
+name: 🏛️ AI Archaeology - Code History Analysis
+
+# UNCONVENTIONAL: Analyzes git history to understand WHY code exists
+# Uses official GitHub Actions for AI providers
+# Suggests modernization based on original intent and current best practices
+
+on:
+  schedule:
+    - cron: '0 3 * * 0'  # Every Sunday at 3 AM
+  workflow_dispatch:
+    inputs:
+      target_directory:
+        description: 'Directory to analyze (default: all)'
+        required: false
+        default: '.'
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+env:
+  MAX_FILE_AGE_DAYS: 365
+  MIN_COMMIT_COUNT: 5
+
+jobs:
+  # ==========================================================================
+  # Find old, frequently-changed code
+  # ==========================================================================
+  discover-artifacts:
+    name: 🔍 Discover Archaeological Targets
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.analyze.outputs.targets }}
+    steps:
+      - name: 📥 Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Need full history for archaeology
+
+      - name: 📊 Analyze Code History
+        id: discover
+        run: |
+          TARGET="${{ github.event.inputs.target_directory || '.' }}"
+
+          echo "🔍 Finding frequently-changed old files..."
+
+          # Find files changed in the last year, sort by change frequency
+          git log --since="${{ env.MAX_FILE_AGE_DAYS }} days ago" --name-only --pretty=format: \
+            | grep -E '\.(js|ts|jsx|tsx)$' \
+            | sort | uniq -c | sort -rn | head -20 > frequently_changed.txt
+
+          echo "📊 Most frequently changed files:"
+          cat frequently_changed.txt
+
+          # Also find old files that haven't been updated recently (potential legacy code)
+          find backend grok-chat/src -name "*.js" -o -name "*.ts" 2>/dev/null | while read file; do
+            LAST_CHANGE=$(git log -1 --format="%ar" -- "$file" 2>/dev/null || echo "unknown")
+            COMMIT_COUNT=$(git log --oneline -- "$file" 2>/dev/null | wc -l)
+            echo "$file|$LAST_CHANGE|$COMMIT_COUNT"
+          done > file_history.txt
+
+          echo "📜 File history analysis:"
+          head -20 file_history.txt
+
+      - name: 🎯 AI Selection of Archaeological Targets (Gemini - Free!)
+        id: analyze
+        if: ${{ secrets.GEMINI_API_KEY != '' || secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+        uses: google-github-actions/run-gemini-cli@v1
+        with:
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          prompt: |
+            You are a code archaeologist. Analyze this codebase's history and select targets for modernization.
+
+            **Frequently Changed Files:**
+            $(cat frequently_changed.txt)
+
+            **File History:**
+            $(head -50 file_history.txt)
+
+            **Task:** Select the TOP 3 files that would benefit most from archaeological analysis:
+
+            Prioritize files that:
+            1. Have been changed many times (suggests complexity or pain points)
+            2. Are old but still actively maintained
+            3. Are critical to the application
+            4. Might benefit from modernization
+
+            Output JSON:
+            {
+              "targets": [
+                {
+                  "file": "path/to/file",
+                  "reason": "why this file was selected",
+                  "expected_insights": "what we might learn",
+                  "modernization_potential": "high|medium|low"
+                }
+              ]
+            }
+
+      - name: 💾 Save Targets
+        run: |
+          echo '${{ steps.analyze.outputs.response }}' > archaeology_targets.json
+          echo "🎯 Selected targets:"
+          cat archaeology_targets.json
+
+      - name: 📤 Upload Targets
+        uses: actions/upload-artifact@v4
+        with:
+          name: archaeology-targets
+          path: archaeology_targets.json
+
+  # ==========================================================================
+  # Deep archaeological analysis of each target
+  # ==========================================================================
+  excavate-history:
+    name: 🏺 Excavate File History
+    runs-on: ubuntu-latest
+    needs: discover-artifacts
+    strategy:
+      matrix:
+        target_index: [0, 1, 2]
+      max-parallel: 3
+    steps:
+      - name: 📥 Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 📥 Download Targets
+        uses: actions/download-artifact@v4
+        with:
+          name: archaeology-targets
+
+      - name: 🎯 Get Specific Target
+        id: target
+        run: |
+          TARGET=$(jq -r ".targets[${{ matrix.target_index }}] // null" archaeology_targets.json)
+
+          if [ "$TARGET" == "null" ]; then
+            echo "No target at index ${{ matrix.target_index }}"
+            echo "exists=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "exists=true" >> $GITHUB_OUTPUT
+          echo "$TARGET" > current_target.json
+
+          FILE=$(echo "$TARGET" | jq -r '.file')
+          echo "file=$FILE" >> $GITHUB_OUTPUT
+
+          echo "🏺 Excavating: $FILE"
+
+      - name: 📜 Extract Full History
+        if: steps.target.outputs.exists == 'true'
+        run: |
+          FILE="${{ steps.target.outputs.file }}"
+
+          echo "## Git History for $FILE" > history_report.txt
+          echo "" >> history_report.txt
+
+          # Get commit history with authors and dates
+          echo "### Commit History:" >> history_report.txt
+          git log --follow --format="%h|%an|%ar|%s" -- "$FILE" | head -50 >> history_report.txt
+          echo "" >> history_report.txt
+
+          # Get the original version
+          echo "### Original Version (First Commit):" >> history_report.txt
+          FIRST_COMMIT=$(git log --follow --format=%H -- "$FILE" | tail -1)
+          git show "$FIRST_COMMIT:$FILE" 2>/dev/null >> history_report.txt || echo "Could not retrieve original" >> history_report.txt
+          echo "" >> history_report.txt
+
+          # Get current version
+          echo "### Current Version:" >> history_report.txt
+          cat "$FILE" >> history_report.txt
+
+          echo "📜 History extracted"
+
+      - name: 🧠 AI Archaeological Analysis (Gemini - Free!)
+        id: excavate
+        if: steps.target.outputs.exists == 'true' && (secrets.GEMINI_API_KEY != '' || secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '')
+        uses: google-github-actions/run-gemini-cli@v1
+        with:
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          prompt: |
+            You are a code archaeologist analyzing the evolution of this file.
+
+            **File:** ${{ steps.target.outputs.file }}
+
+            **Complete History:**
+            $(cat history_report.txt)
+
+            **Your Task:**
+            1. **Understand Original Intent** - Why was this code written?
+            2. **Track Evolution** - How has it changed over time?
+            3. **Identify Technical Debt** - What compromises were made?
+            4. **Find Pain Points** - What keeps getting changed?
+            5. **Suggest Modernization** - How should this evolve?
+
+            Consider:
+            - What patterns from the past no longer make sense?
+            - What modern techniques could replace old approaches?
+            - What was the original developer trying to accomplish?
+            - Is the code still serving its original purpose?
+
+            Output JSON:
+            {
+              "original_intent": "...",
+              "evolution_summary": "...",
+              "technical_debt_identified": ["..."],
+              "recurring_pain_points": ["..."],
+              "modernization_suggestions": [
+                {
+                  "suggestion": "...",
+                  "benefit": "...",
+                  "effort": "low|medium|high",
+                  "breaking_change": true|false
+                }
+              ],
+              "recommended_refactoring": "detailed description"
+            }
+
+      - name: 💾 Save Archaeological Report
+        if: steps.target.outputs.exists == 'true'
+        run: |
+          echo '${{ steps.excavate.outputs.response }}' > archaeological_report_${{ matrix.target_index }}.json
+          echo "🏺 Archaeological report:"
+          cat archaeological_report_${{ matrix.target_index }}.json
+
+      - name: 📤 Upload Report
+        if: steps.target.outputs.exists == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: archaeological-report-${{ matrix.target_index }}
+          path: archaeological_report_${{ matrix.target_index }}.json
+
+  # ==========================================================================
+  # Generate comprehensive archaeological findings
+  # ==========================================================================
+  compile-findings:
+    name: 📚 Compile Archaeological Findings
+    runs-on: ubuntu-latest
+    needs: [discover-artifacts, excavate-history]
+    if: always()
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📥 Download All Reports
+        uses: actions/download-artifact@v4
+        with:
+          path: reports/
+
+      - name: 📊 Synthesize Findings (Gemini - Free!)
+        id: synthesize
+        if: ${{ secrets.GEMINI_API_KEY != '' || secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+        uses: google-github-actions/run-gemini-cli@v1
+        with:
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          prompt: |
+            You are synthesizing archaeological findings from multiple files.
+
+            **All Reports:**
+            $(cat reports/archaeological-report-*/archaeological_report_*.json 2>/dev/null || echo "{}")
+
+            **Task:**
+            1. Find common patterns across all analyzed files
+            2. Identify systemic technical debt
+            3. Prioritize modernization efforts
+            4. Create an actionable roadmap
+
+            Output JSON:
+            {
+              "common_patterns": ["..."],
+              "systemic_issues": ["..."],
+              "quick_wins": [{"file": "...", "change": "...", "benefit": "..."}],
+              "long_term_refactoring": [{"area": "...", "scope": "...", "timeline": "..."}],
+              "priority_order": ["..."]
+            }
+
+      - name: 📄 Generate Markdown Report
+        run: |
+          cat > ARCHAEOLOGICAL_FINDINGS.md << 'REPORT'
+          # 🏛️ Code Archaeological Findings
+
+          **Analysis Date:** $(date -Iseconds)
+          **Run:** #${{ github.run_number }}
+
+          ## 🔍 Executive Summary
+
+          This archaeological analysis examined the evolution of key files to understand their original intent and identify modernization opportunities.
+
+          ## 📊 Common Patterns
+
+          $(echo '${{ steps.synthesize.outputs.response }}' | jq -r '.common_patterns[]? | "- " + .' || echo "_No common patterns identified_")
+
+          ## ⚠️ Systemic Issues
+
+          $(echo '${{ steps.synthesize.outputs.response }}' | jq -r '.systemic_issues[]? | "- " + .' || echo "_No systemic issues found_")
+
+          ## ⚡ Quick Wins
+
+          These changes can be made quickly for immediate benefit:
+
+          $(echo '${{ steps.synthesize.outputs.response }}' | jq -r '.quick_wins[]? | "### " + .file + "\n**Change:** " + .change + "\n**Benefit:** " + .benefit + "\n"' || echo "_No quick wins identified_")
+
+          ## 🎯 Long-term Refactoring Recommendations
+
+          $(echo '${{ steps.synthesize.outputs.response }}' | jq -r '.long_term_refactoring[]? | "### " + .area + "\n**Scope:** " + .scope + "\n**Timeline:** " + .timeline + "\n"' || echo "_No long-term recommendations_")
+
+          ## 📋 Priority Order
+
+          $(echo '${{ steps.synthesize.outputs.response }}' | jq -r '.priority_order[]? | "1. " + .' || echo "_No priority order specified_")
+
+          ## 📁 Detailed Reports
+
+          Individual file analysis reports are attached to this workflow run.
+
+          ---
+
+          _Generated by AI Archaeology • Understanding code through its history_
+          REPORT
+
+          cat ARCHAEOLOGICAL_FINDINGS.md
+
+      - name: 💬 Create Issue with Findings
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('ARCHAEOLOGICAL_FINDINGS.md', 'utf8');
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `🏛️ Archaeological Findings - Run #${{ github.run_number }}`,
+              body: report,
+              labels: ['archaeology', 'technical-debt', 'refactoring']
+            });
+
+      - name: 📤 Commit Report to Repository
+        run: |
+          git config user.name "AI Archaeologist Bot"
+          git config user.email "archaeologist-bot@github-actions"
+
+          mkdir -p docs/archaeology
+          cp ARCHAEOLOGICAL_FINDINGS.md "docs/archaeology/report-$(date +%Y-%m-%d).md"
+
+          git add docs/archaeology/ || true
+          git diff --cached --quiet || git commit -m "🏛️ Add archaeological findings from run ${{ github.run_number }}" --no-gpg-sign
+
+          # Only push on main or develop branches
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]] || [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+            git push || echo "⚠️ Could not push archaeological report"
+          else
+            echo "📝 Report prepared but not pushed (not on main/develop)"
+          fi
