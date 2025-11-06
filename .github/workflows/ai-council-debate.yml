@@ -21,7 +21,7 @@ jobs:
   claude-independent-review:
     name: 🎭 Claude's Independent Analysis
     runs-on: ubuntu-latest
-    if: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+    if: ${{ secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
     outputs:
       review_json: ${{ steps.review.outputs.result }}
     steps:
@@ -40,7 +40,9 @@ jobs:
         id: review
         uses: anthropics/claude-code-action@v1
         with:
+          # Supports BOTH Claude Max (OAuth) and API key
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
             You are a senior architect conducting a deep code review. Analyze this PR critically:
 
@@ -192,10 +194,12 @@ jobs:
 
       - name: 🤔 Synthesize Reviews with Claude
         id: synthesize
-        if: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+        if: ${{ secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
         uses: anthropics/claude-code-action@v1
         with:
+          # Supports BOTH Claude Max (OAuth) and API key
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
             You are the moderator of an AI council. Three AIs have reviewed the same code.
 

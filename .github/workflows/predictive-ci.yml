@@ -62,12 +62,12 @@ jobs:
           echo "Files changed in this commit:"
           cat changed_files.txt
 
-      - name: 🔮 AI Prediction Analysis
+      - name: 🔮 AI Prediction Analysis (Gemini - Free!)
         id: predict
-        if: ${{ secrets.ANTHROPIC_API_KEY != '' || secrets.GEMINI_API_KEY != '' }}
-        uses: anthropics/claude-code-action@v1
+        if: ${{ secrets.GEMINI_API_KEY != '' || secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+        uses: google-github-actions/run-gemini-cli@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
           prompt: |
             You are a predictive CI system. Analyze this code change and predict what might fail.
 
@@ -212,12 +212,12 @@ jobs:
           name: ai-predictions
           path: predictions/
 
-      - name: 📊 Analyze Prediction Accuracy
+      - name: 📊 Analyze Prediction Accuracy (Gemini - Free!)
         id: accuracy
-        if: ${{ secrets.ANTHROPIC_API_KEY != '' || secrets.GEMINI_API_KEY != '' }}
-        uses: anthropics/claude-code-action@v1
+        if: ${{ secrets.GEMINI_API_KEY != '' || secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+        uses: google-github-actions/run-gemini-cli@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
           prompt: |
             You are learning from CI results to improve future predictions.
 

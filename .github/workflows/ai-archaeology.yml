@@ -63,12 +63,12 @@ jobs:
           echo "📜 File history analysis:"
           head -20 file_history.txt
 
-      - name: 🎯 AI Selection of Archaeological Targets
+      - name: 🎯 AI Selection of Archaeological Targets (Gemini - Free!)
         id: analyze
-        if: ${{ secrets.ANTHROPIC_API_KEY != '' || secrets.GEMINI_API_KEY != '' }}
-        uses: anthropics/claude-code-action@v1
+        if: ${{ secrets.GEMINI_API_KEY != '' || secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+        uses: google-github-actions/run-gemini-cli@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
           prompt: |
             You are a code archaeologist. Analyze this codebase's history and select targets for modernization.
 
@@ -176,12 +176,12 @@ jobs:
 
           echo "📜 History extracted"
 
-      - name: 🧠 AI Archaeological Analysis
+      - name: 🧠 AI Archaeological Analysis (Gemini - Free!)
         id: excavate
-        if: steps.target.outputs.exists == 'true' && (secrets.ANTHROPIC_API_KEY != '' || secrets.GEMINI_API_KEY != '')
-        uses: anthropics/claude-code-action@v1
+        if: steps.target.outputs.exists == 'true' && (secrets.GEMINI_API_KEY != '' || secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '')
+        uses: google-github-actions/run-gemini-cli@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
           prompt: |
             You are a code archaeologist analyzing the evolution of this file.
 
@@ -251,12 +251,12 @@ jobs:
         with:
           path: reports/
 
-      - name: 📊 Synthesize Findings
+      - name: 📊 Synthesize Findings (Gemini - Free!)
         id: synthesize
-        if: ${{ secrets.ANTHROPIC_API_KEY != '' || secrets.GEMINI_API_KEY != '' }}
-        uses: anthropics/claude-code-action@v1
+        if: ${{ secrets.GEMINI_API_KEY != '' || secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+        uses: google-github-actions/run-gemini-cli@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
           prompt: |
             You are synthesizing archaeological findings from multiple files.
 

@@ -63,12 +63,14 @@ jobs:
             fi
           done
 
-      - name: 🎯 AI Analysis of Opportunities
+      - name: 🎯 AI Analysis of Opportunities (Claude Max)
         id: scan
-        if: ${{ secrets.ANTHROPIC_API_KEY != '' || secrets.GEMINI_API_KEY != '' }}
+        if: ${{ secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '' || secrets.GEMINI_API_KEY != '' }}
         uses: anthropics/claude-code-action@v1
         with:
+          # Supports BOTH Claude Max (OAuth) and API key
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
             You are an autonomous code improvement system. Analyze this codebase for opportunities.
 
@@ -174,12 +176,14 @@ jobs:
             echo "" > current_code.txt
           fi
 
-      - name: 🤖 AI Implementation
+      - name: 🤖 AI Implementation (Claude Max)
         id: implement
-        if: steps.opportunity.outputs.exists == 'true' && (secrets.ANTHROPIC_API_KEY != '' || secrets.GEMINI_API_KEY != '')
+        if: steps.opportunity.outputs.exists == 'true' && (secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '' || secrets.GEMINI_API_KEY != '')
         uses: anthropics/claude-code-action@v1
         with:
+          # Supports BOTH Claude Max (OAuth) and API key
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
             You are implementing this improvement:
 

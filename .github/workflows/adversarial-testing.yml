@@ -91,12 +91,14 @@ jobs:
 
           cat attack_surface.txt
 
-      - name: 🎭 AI Attack Vector Generation
+      - name: 🎭 AI Attack Vector Generation (Claude Max)
         id: generate
-        if: ${{ secrets.ANTHROPIC_API_KEY != '' || secrets.GEMINI_API_KEY != '' }}
+        if: ${{ secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '' || secrets.GEMINI_API_KEY != '' }}
         uses: anthropics/claude-code-action@v1
         with:
+          # Supports BOTH Claude Max (OAuth) and API key
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
             You are a penetration tester. Generate attack vectors to test this application's security.
 
@@ -360,12 +362,14 @@ jobs:
         with:
           name: attack-results
 
-      - name: 🧠 AI Security Analysis
+      - name: 🧠 AI Security Analysis (Claude Max)
         id: analyze
-        if: ${{ secrets.ANTHROPIC_API_KEY != '' || secrets.GEMINI_API_KEY != '' }}
+        if: ${{ secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '' || secrets.GEMINI_API_KEY != '' }}
         uses: anthropics/claude-code-action@v1
         with:
+          # Supports BOTH Claude Max (OAuth) and API key
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
             You are a security analyst reviewing adversarial testing results.
 
