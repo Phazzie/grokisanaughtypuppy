@@ -1,7 +1,7 @@
 name: 🧠 AI Council - Multi-Agent Code Review Debate
 
 # UNCONVENTIONAL: Three AIs debate each other's findings
-# Claude, Gemini, and Copilot independently review, then challenge each other
+# Uses official GitHub Actions for Claude, Gemini, and Copilot
 # The most critical/agreed-upon issues rise to the top
 
 on:
@@ -21,7 +21,7 @@ jobs:
   claude-independent-review:
     name: 🎭 Claude's Independent Analysis
     runs-on: ubuntu-latest
-    if: ${{ secrets.CLAUDE_CODE_API_KEY != '' }}
+    if: ${{ secrets.ANTHROPIC_API_KEY != '' }}
     outputs:
       review_json: ${{ steps.review.outputs.result }}
     steps:
@@ -38,34 +38,30 @@ jobs:
 
       - name: 🎭 Claude Deep Analysis
         id: review
-        env:
-          CLAUDE_CODE_API_KEY: ${{ secrets.CLAUDE_CODE_API_KEY }}
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            You are a senior architect conducting a deep code review. Analyze this PR critically:
+
+            1. **Security Vulnerabilities** - Find potential exploits
+            2. **Performance Issues** - Identify bottlenecks and inefficiencies
+            3. **Architecture Problems** - Detect design flaws
+            4. **Hidden Bugs** - Find edge cases and race conditions
+            5. **Technical Debt** - Identify future maintenance nightmares
+
+            Be CRITICAL. Find the problems that will cause production incidents.
+            Output ONLY JSON in this format:
+            {
+              "critical_issues": [{"type": "...", "severity": 1-10, "finding": "...", "evidence": "...", "confidence": 1-10}],
+              "recommendations": ["..."],
+              "overall_risk": 1-10
+            }
+
+      - name: 💾 Save Claude Review
         run: |
-          # Use Claude CLI in headless mode
-          cat > claude_prompt.txt << 'PROMPT'
-          You are a senior architect conducting a deep code review. Analyze this PR critically:
-
-          1. **Security Vulnerabilities** - Find potential exploits
-          2. **Performance Issues** - Identify bottlenecks and inefficiencies
-          3. **Architecture Problems** - Detect design flaws
-          4. **Hidden Bugs** - Find edge cases and race conditions
-          5. **Technical Debt** - Identify future maintenance nightmares
-
-          Be CRITICAL. Find the problems that will cause production incidents.
-          Output ONLY JSON in this format:
-          {
-            "critical_issues": [{"type": "...", "severity": 1-10, "finding": "...", "evidence": "...", "confidence": 1-10}],
-            "recommendations": ["..."],
-            "overall_risk": 1-10
-          }
-          PROMPT
-
-          # Run Claude in headless mode
-          claude -p "$(cat claude_prompt.txt)" --output-format stream-json < pr_diff.txt > claude_review.json || echo '{"critical_issues":[],"recommendations":[],"overall_risk":0}' > claude_review.json
-
-          echo "result<<EOF" >> $GITHUB_OUTPUT
-          cat claude_review.json >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          echo '${{ steps.review.outputs.response }}' > claude_review.json
+          cat claude_review.json
 
       - name: 📤 Upload Claude Review
         uses: actions/upload-artifact@v4
@@ -76,9 +72,9 @@ jobs:
   gemini-independent-review:
     name: 💎 Gemini's Independent Analysis
     runs-on: ubuntu-latest
-    if: ${{ secrets.GOOGLE_API_KEY != '' }}
+    if: ${{ secrets.GEMINI_API_KEY != '' }}
     outputs:
-      review_json: ${{ steps.review.outputs.result }}
+      review_json: ${{ steps.review.outputs.response }}
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v4
@@ -90,33 +86,30 @@ jobs:
 
       - name: 💎 Gemini Deep Analysis
         id: review
-        env:
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        uses: google-github-actions/run-gemini-cli@v1
+        with:
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          prompt: |
+            You are a security expert and performance specialist. Review this code:
+
+            1. **Security Flaws** - Authentication, authorization, injection vulnerabilities
+            2. **Performance Killers** - N+1 queries, memory leaks, blocking operations
+            3. **Scalability Issues** - Will this work at 100x scale?
+            4. **Error Handling** - What happens when things go wrong?
+            5. **Data Integrity** - Can data get corrupted?
+
+            Be SKEPTICAL. Assume this will run in production tomorrow.
+            Output ONLY JSON in this format:
+            {
+              "critical_issues": [{"type": "...", "severity": 1-10, "finding": "...", "evidence": "...", "confidence": 1-10}],
+              "recommendations": ["..."],
+              "overall_risk": 1-10
+            }
+
+      - name: 💾 Save Gemini Review
         run: |
-          cat > gemini_prompt.txt << 'PROMPT'
-          You are a security expert and performance specialist. Review this code:
-
-          1. **Security Flaws** - Authentication, authorization, injection vulnerabilities
-          2. **Performance Killers** - N+1 queries, memory leaks, blocking operations
-          3. **Scalability Issues** - Will this work at 100x scale?
-          4. **Error Handling** - What happens when things go wrong?
-          5. **Data Integrity** - Can data get corrupted?
-
-          Be SKEPTICAL. Assume this will run in production tomorrow.
-          Output ONLY JSON in this format:
-          {
-            "critical_issues": [{"type": "...", "severity": 1-10, "finding": "...", "evidence": "...", "confidence": 1-10}],
-            "recommendations": ["..."],
-            "overall_risk": 1-10
-          }
-          PROMPT
-
-          # Run Gemini CLI in headless mode
-          gemini -p "$(cat gemini_prompt.txt)" --yolo --format json < pr_diff.txt > gemini_review.json || echo '{"critical_issues":[],"recommendations":[],"overall_risk":0}' > gemini_review.json
-
-          echo "result<<EOF" >> $GITHUB_OUTPUT
-          cat gemini_review.json >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          echo '${{ steps.review.outputs.response }}' > gemini_review.json
+          cat gemini_review.json
 
       - name: 📤 Upload Gemini Review
         uses: actions/upload-artifact@v4
@@ -140,10 +133,14 @@ jobs:
 
       - name: 🐙 Copilot Deep Analysis
         id: review
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Install Copilot CLI
+          # Install GitHub CLI and Copilot extension
+          type gh &>/dev/null || (curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
+          sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && \
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null && \
+          sudo apt update && \
+          sudo apt install gh -y)
+
           gh extension install github/gh-copilot 2>/dev/null || true
 
           cat > copilot_prompt.txt << 'PROMPT'
@@ -164,12 +161,14 @@ jobs:
           }
           PROMPT
 
-          # Run Copilot in programmatic mode
-          gh copilot -p "$(cat copilot_prompt.txt)" --allow-all-tools --output-format json < pr_diff.txt > copilot_review.json || echo '{"critical_issues":[],"recommendations":[],"overall_risk":0}' > copilot_review.json
+          # Run Copilot analysis
+          gh copilot suggest "$(cat copilot_prompt.txt)" > copilot_review.json || echo '{"critical_issues":[],"recommendations":[],"overall_risk":0}' > copilot_review.json
 
           echo "result<<EOF" >> $GITHUB_OUTPUT
           cat copilot_review.json >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 📤 Upload Copilot Review
         uses: actions/upload-artifact@v4
@@ -191,43 +190,35 @@ jobs:
         with:
           path: reviews/
 
-      - name: 🤔 Synthesize Reviews
+      - name: 🤔 Synthesize Reviews with Claude
         id: synthesize
+        if: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            You are the moderator of an AI council. Three AIs have reviewed the same code.
+
+            Your job:
+            1. **Find Consensus** - What did all AIs agree on? (Highest priority)
+            2. **Identify Conflicts** - Where do they disagree? Why?
+            3. **Challenge Weak Findings** - Which concerns lack evidence?
+            4. **Synthesize Action Items** - What MUST be fixed vs. nice-to-have?
+            5. **Risk Assessment** - Weighted risk score based on agreement
+
+            Output format:
+            {
+              "consensus_critical_issues": [{"issue": "...", "agreed_by": ["claude", "gemini", "copilot"], "severity": 1-10}],
+              "debated_issues": [{"issue": "...", "claude_says": "...", "gemini_says": "...", "copilot_says": "..."}],
+              "must_fix": ["..."],
+              "nice_to_have": ["..."],
+              "overall_risk": 1-10,
+              "recommendation": "approve|request_changes|needs_discussion"
+            }
+
+      - name: 💾 Save Council Decision
         run: |
-          cat > debate_prompt.txt << 'DEBATE'
-          You are the moderator of an AI council. Three AIs have reviewed the same code:
-
-          Claude's Review: $(cat reviews/claude-review/claude_review.json 2>/dev/null || echo '{}')
-          Gemini's Review: $(cat reviews/gemini-review/gemini_review.json 2>/dev/null || echo '{}')
-          Copilot's Review: $(cat reviews/copilot-review/copilot_review.json 2>/dev/null || echo '{}')
-
-          Your job:
-          1. **Find Consensus** - What did all AIs agree on? (Highest priority)
-          2. **Identify Conflicts** - Where do they disagree? Why?
-          3. **Challenge Weak Findings** - Which concerns lack evidence?
-          4. **Synthesize Action Items** - What MUST be fixed vs. nice-to-have?
-          5. **Risk Assessment** - Weighted risk score based on agreement
-
-          Output format:
-          {
-            "consensus_critical_issues": [{"issue": "...", "agreed_by": ["claude", "gemini", "copilot"], "severity": 1-10}],
-            "debated_issues": [{"issue": "...", "claude_says": "...", "gemini_says": "...", "copilot_says": "..."}],
-            "must_fix": ["..."],
-            "nice_to_have": ["..."],
-            "overall_risk": 1-10,
-            "recommendation": "approve|request_changes|needs_discussion"
-          }
-          DEBATE
-
-          # Use the most available AI for synthesis
-          if [ -n "${{ secrets.CLAUDE_CODE_API_KEY }}" ]; then
-            claude -p "$(cat debate_prompt.txt)" --output-format stream-json > council_decision.json
-          elif [ -n "${{ secrets.GOOGLE_API_KEY }}" ]; then
-            gemini -p "$(cat debate_prompt.txt)" --yolo --format json > council_decision.json
-          else
-            echo '{"consensus_critical_issues":[],"must_fix":[],"overall_risk":0,"recommendation":"approve"}' > council_decision.json
-          fi
-
+          echo '${{ steps.synthesize.outputs.response }}' > council_decision.json
           cat council_decision.json
 
       - name: 📊 Generate Visual Report
@@ -237,8 +228,8 @@ jobs:
 
           ## ⚖️ Council Decision
 
-          **Overall Risk**: $(jq -r '.overall_risk' council_decision.json)/10
-          **Recommendation**: $(jq -r '.recommendation' council_decision.json)
+          **Overall Risk**: $(jq -r '.overall_risk // "N/A"' council_decision.json)/10
+          **Recommendation**: $(jq -r '.recommendation // "N/A"' council_decision.json)
 
           ---
 
@@ -246,7 +237,7 @@ jobs:
 
           These issues were identified by multiple AIs and should be prioritized:
 
-          $(jq -r '.consensus_critical_issues[] | "### " + .issue + "\n**Severity**: " + (.severity|tostring) + "/10\n**Agreed by**: " + (.agreed_by|join(", ")) + "\n"' council_decision.json)
+          $(jq -r '.consensus_critical_issues[]? | "### " + .issue + "\n**Severity**: " + (.severity|tostring) + "/10\n**Agreed by**: " + (.agreed_by|join(", ")) + "\n"' council_decision.json || echo "_No consensus issues found_")
 
           ---
 
@@ -254,19 +245,19 @@ jobs:
 
           These issues need human judgment:
 
-          $(jq -r '.debated_issues[] | "### " + .issue + "\n- 🎭 **Claude**: " + .claude_says + "\n- 💎 **Gemini**: " + .gemini_says + "\n- 🐙 **Copilot**: " + .copilot_says + "\n"' council_decision.json)
+          $(jq -r '.debated_issues[]? | "### " + .issue + "\n- 🎭 **Claude**: " + .claude_says + "\n- 💎 **Gemini**: " + .gemini_says + "\n- 🐙 **Copilot**: " + .copilot_says + "\n"' council_decision.json || echo "_No debated issues found_")
 
           ---
 
           ## ✅ Must Fix Before Merge
 
-          $(jq -r '.must_fix[] | "- [ ] " + .' council_decision.json)
+          $(jq -r '.must_fix[]? | "- [ ] " + .' council_decision.json || echo "_No critical fixes required_")
 
           ---
 
           ## 💡 Nice to Have
 
-          $(jq -r '.nice_to_have[] | "- " + .' council_decision.json)
+          $(jq -r '.nice_to_have[]? | "- " + .' council_decision.json || echo "_No suggestions_")
 
           ---
 
@@ -275,27 +266,38 @@ jobs:
           <details>
           <summary>🎭 Claude's Full Analysis</summary>
 
-          $(cat reviews/claude-review/claude_review.json 2>/dev/null | jq -r '.')
+          \`\`\`json
+          $(cat reviews/claude-review/claude_review.json 2>/dev/null || echo "{}")
+          \`\`\`
 
           </details>
 
           <details>
           <summary>💎 Gemini's Full Analysis</summary>
 
-          $(cat reviews/gemini-review/gemini_review.json 2>/dev/null | jq -r '.')
+          \`\`\`json
+          $(cat reviews/gemini-review/gemini_review.json 2>/dev/null || echo "{}")
+          \`\`\`
 
           </details>
 
           <details>
           <summary>🐙 Copilot's Full Analysis</summary>
 
-          $(cat reviews/copilot-review/copilot_review.json 2>/dev/null | jq -r '.')
+          \`\`\`json
+          $(cat reviews/copilot-review/copilot_review.json 2>/dev/null || echo "{}")
+          \`\`\`
 
           </details>
 
           ---
 
           _Generated by AI Council - Where Multiple AIs Debate Your Code_ 🧠
+
+          **Implementation Note**: This workflow uses official GitHub Actions:
+          - `anthropics/claude-code-action@v1`
+          - `google-github-actions/run-gemini-cli@v1`
+          - GitHub Copilot CLI (built-in)
           REPORT
 
       - name: 💬 Post Council Decision to PR
@@ -314,8 +316,9 @@ jobs:
 
       - name: ❌ Fail if Critical Issues Found
         run: |
-          RISK=$(jq -r '.overall_risk' council_decision.json)
+          RISK=$(jq -r '.overall_risk // 0' council_decision.json)
           if [ "$RISK" -gt 7 ]; then
             echo "❌ AI Council has determined this PR is too risky (risk: $RISK/10)"
             exit 1
           fi
+          echo "✅ Risk level acceptable ($RISK/10)"
