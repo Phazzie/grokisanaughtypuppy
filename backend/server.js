@@ -783,10 +783,13 @@ function validateEnvironment() {
 validateEnvironment();
 
 const server = app.listen(PORT, () => {
+  const rateLimitMax = parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100;
+  const rateLimitWindow = parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000;
+
   console.log(`Backend server running on http://localhost:${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`CORS allowed origins: ${allowedOrigins.join(', ')}`);
-  console.log(`Rate limiting: ${apiLimiter.max} requests per ${apiLimiter.windowMs / 60000} minutes`);
+  console.log(`Rate limiting: ${rateLimitMax} requests per ${rateLimitWindow / 60000} minutes`);
   console.log('✅ Security measures active: Helmet, CORS, Rate Limiting, Input Validation, Compression');
 });
 
