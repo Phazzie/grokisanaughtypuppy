@@ -59,12 +59,22 @@ call_gemini_api() {
 
     log_info "Calling Gemini API..."
 
-    # Using curl to call Gemini API
-    # Adjust endpoint and format based on actual Gemini API
+    # Check if jq is available for proper JSON encoding
+    if ! command -v jq &> /dev/null; then
+        log_error "jq is required but not installed. Please install jq."
+        return 1
+    fi
+
+    # Safely construct JSON payload using jq
+    local json_payload
+    json_payload=$(jq -n --arg prompt "$prompt" '{"contents":[{"parts":[{"text":$prompt}]}]}')
+
+    # Using curl to call Gemini API with API key in header for better security
     curl -s -X POST \
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=$GEMINI_API_KEY" \
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent" \
+        -H "x-goog-api-key: $GEMINI_API_KEY" \
         -H 'Content-Type: application/json' \
-        -d "{\"contents\":[{\"parts\":[{\"text\":\"$prompt\"}]}]}" \
+        -d "$json_payload" \
         > "$output_file" 2>&1 || {
             log_error "API call failed"
             return 1
@@ -85,7 +95,8 @@ review_code() {
 
     log_info "Reviewing code with Gemini: $file_path"
 
-    local code_content=$(cat "$file_path")
+    local code_content
+    code_content=$(cat "$file_path")
     local prompt="Review this code for quality, security, and best practices:\n\n$code_content"
 
     # Call Gemini API or CLI
@@ -111,7 +122,8 @@ generate_tests() {
 
     log_info "Generating tests with Gemini: $source_file"
 
-    local code_content=$(cat "$source_file")
+    local code_content
+    code_content=$(cat "$source_file")
     local prompt="Generate comprehensive Jasmine/Karma unit tests for this Angular/TypeScript code:\n\n$code_content"
 
     call_gemini_api "$prompt" "gemini-tests-raw.json"
@@ -134,7 +146,8 @@ analyze_diff() {
 
     log_info "Analyzing diff with Gemini..."
 
-    local diff_content=$(cat "$diff_file")
+    local diff_content
+    diff_content=$(cat "$diff_file")
     local prompt="Analyze this git diff and provide insights on changes, potential issues, and recommendations:\n\n$diff_content"
 
     call_gemini_api "$prompt" "$output_file"
