@@ -33,14 +33,17 @@ function errorHandler(err, req, res, next) {
   error.message = err.message;
   error.statusCode = err.statusCode || 500;
 
+  // Get logger from request or use default
+  const logger = req.logger || require('../utils/logger');
+
   // Log error details
-  console.error('Error:', {
+  logger.error('Error occurred', {
     message: err.message,
     statusCode: error.statusCode,
     path: req.path,
     method: req.method,
     ip: req.ip,
-    timestamp: new Date().toISOString(),
+    requestId: req.id,
     stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
   });
 

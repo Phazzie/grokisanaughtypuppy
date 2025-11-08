@@ -6,18 +6,79 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const { body, validationResult } = require('express-validator');
 const mongoSanitize = require('express-mongo-sanitize');
+const compression = require('compression');
 const crypto = require('crypto');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs').promises;
+const { v4: uuidv4 } = require('uuid');
+const logger = require('./utils/logger');
+const cache = require('./utils/cache');
 const { detectSuspiciousActivity, securityHeaders, sanitizeResponse } = require('./middleware/security');
 const { errorHandler, notFoundHandler, asyncHandler } = require('./middleware/errorHandler');
 const db = require('./db');
 const { parseChatGPTExport, validateConversation } = require('./conversationParser');
 const { analyzeConversation, categorizeTopics, generateInsights } = require('./analysisService');
+const swaggerUi = require('swagger-ui-express');
+const swaggerSpec = require('./swagger');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Sentry integration (production only)
+if (process.env.SENTRY_DSN && process.env.NODE_ENV === 'production') {
+  const Sentry = require('@sentry/node');
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    environment: process.env.NODE_ENV,
+    tracesSampleRate: 1.0,
+  });
+  app.use(Sentry.Handlers.requestHandler());
+  app.use(Sentry.Handlers.tracingHandler());
+}
+
+// Request ID tracking middleware
+app.use((req, res, next) => {
+  req.id = req.headers['x-request-id'] || uuidv4();
+  res.setHeader('X-Request-ID', req.id);
+
+  // Attach logger with request context
+  req.logger = logger.withRequest(req);
+
+  // Log request with ID
+  const start = Date.now();
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    req.logger.info('Request completed', {
+      method: req.method,
+      path: req.path,
+      statusCode: res.statusCode,
+      duration,
+      ip: req.ip,
+    });
+
+    // Log slow requests
+    if (duration > 1000) {
+      logger.performance('slow_request', duration, {
+        method: req.method,
+        path: req.path,
+      });
+    }
+  });
+
+  next();
+});
+
+// Compression: Gzip responses for better performance
+app.use(compression({
+  filter: (req, res) => {
+    if (req.headers['x-no-compression']) {
+      return false;
+    }
+    return compression.filter(req, res);
+  },
+  level: 6, // Balance between speed and compression ratio
+}));
 
 // Security: Helmet for security headers
 app.use(helmet({
@@ -67,24 +128,25 @@ app.use(detectSuspiciousActivity);
 // Security: Add security-focused HTTP headers
 app.use(securityHeaders);
 
-// Security: Rate limiting
+// Security: Rate limiting (configurable via environment)
 const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
+  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100,
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => req.path === '/api/health', // Don't rate limit health checks
 });
 
 const chatLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 20, // Limit chat requests to 20 per minute
+  windowMs: 60 * 1000,
+  max: parseInt(process.env.CHAT_RATE_LIMIT_MAX) || 20,
   message: 'Too many chat requests, please slow down.',
 });
 
 const uploadLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 10, // Limit uploads to 10 per hour
+  windowMs: 60 * 60 * 1000,
+  max: parseInt(process.env.UPLOAD_RATE_LIMIT_MAX) || 10,
   message: 'Too many upload requests, please try again later.',
 });
 
@@ -133,7 +195,41 @@ const validateEvaluate = [
   body('context').optional().isString().trim().isLength({ max: 5000 }).withMessage('Context too long'),
 ];
 
-app.post('/api/chat', chatLimiter, validateChat, asyncHandler(async (req, res) => {
+/**
+ * @swagger
+ * /api/v1/chat:
+ *   post:
+ *     tags: [Chat]
+ *     summary: Send chat messages to Grok AI
+ *     description: Send a conversation to the Grok API and receive a response. Supports caching to reduce API calls.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/ChatRequest'
+ *           example:
+ *             messages:
+ *               - role: user
+ *                 content: "Hello, how are you?"
+ *             systemPrompt: "You are a helpful AI assistant"
+ *             temperature: 0.7
+ *     responses:
+ *       200:
+ *         description: Successful response from Grok
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ChatResponse'
+ *       400:
+ *         $ref: '#/components/responses/BadRequest'
+ *       429:
+ *         $ref: '#/components/responses/TooManyRequests'
+ *       500:
+ *         $ref: '#/components/responses/InternalServerError'
+ */
+// V1 Chat endpoint
+app.post('/api/v1/chat', chatLimiter, validateChat, asyncHandler(async (req, res) => {
   try {
     // Check validation results
     const errors = validationResult(req);
@@ -141,16 +237,26 @@ app.post('/api/chat', chatLimiter, validateChat, asyncHandler(async (req, res) =
       return res.status(400).json({ errors: errors.array() });
     }
 
-    const { messages, systemPrompt, temperature = 0.7 } = req.body;
-    
+    const { messages, systemPrompt, temperature = parseFloat(process.env.DEFAULT_TEMPERATURE) || 0.7 } = req.body;
+
     // Additional validation
     if (messages.length > 50) {
       return res.status(400).json({ error: 'Too many messages in conversation' });
     }
-    
+
     const apiKey = process.env.XAI_API_KEY;
     if (!apiKey) {
       return res.status(500).json({ error: 'XAI_API_KEY not configured' });
+    }
+
+    // Check cache (unless explicitly disabled)
+    const cacheKey = cache.generateCacheKey({ messages, systemPrompt, temperature });
+    if (!req.query.noCache) {
+      const cached = cache.get(cacheKey);
+      if (cached) {
+        req.logger.info('Cache hit for chat request');
+        return res.json({ ...cached, cached: true });
+      }
     }
 
     const messagesWithSystem = [
@@ -174,16 +280,22 @@ app.post('/api/chat', chatLimiter, validateChat, asyncHandler(async (req, res) =
       }
     );
 
+    // Cache the response
+    cache.set(cacheKey, response.data);
+
     res.json(response.data);
   } catch (error) {
-    console.error('Error calling Grok API:', error.response?.data || error.message);
-    res.status(error.response?.status || 500).json({ 
-      error: error.response?.data?.error?.message || 'Failed to get response from Grok' 
+    req.logger.error('Error calling Grok API', {
+      error: error.response?.data || error.message
+    });
+    res.status(error.response?.status || 500).json({
+      error: error.response?.data?.error?.message || 'Failed to get response from Grok'
     });
   }
 }));
 
-app.post('/api/evaluate', chatLimiter, validateEvaluate, asyncHandler(async (req, res) => {
+// V1 Evaluate endpoint
+app.post('/api/v1/evaluate', chatLimiter, validateEvaluate, asyncHandler(async (req, res) => {
   try {
     // Check validation results
     const errors = validationResult(req);
@@ -249,7 +361,8 @@ Please provide:
 // ============ NEW CONVERSATION UPLOAD & ANALYSIS ENDPOINTS ============
 
 // Upload ChatGPT conversations JSON file
-app.post('/api/upload', uploadLimiter, upload.single('file'), asyncHandler(async (req, res) => {
+// V1 Upload endpoint
+app.post('/api/v1/upload', uploadLimiter, upload.single('file'), asyncHandler(async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
@@ -304,7 +417,8 @@ app.post('/api/upload', uploadLimiter, upload.single('file'), asyncHandler(async
 }));
 
 // Get import status
-app.get('/api/imports/:importId', asyncHandler(async (req, res) => {
+// V1 Get import status
+app.get('/api/v1/imports/:importId', asyncHandler(async (req, res) => {
   const { importId } = req.params;
   const userId = req.query.userId || 'anonymous';
 
@@ -319,21 +433,24 @@ app.get('/api/imports/:importId', asyncHandler(async (req, res) => {
 }));
 
 // List all imports for a user
-app.get('/api/imports', asyncHandler(async (req, res) => {
+// V1 List imports
+app.get('/api/v1/imports', asyncHandler(async (req, res) => {
   const userId = req.query.userId || 'anonymous';
   const imports = await db.listImports(userId);
   res.json(imports);
 }));
 
 // List all topics
-app.get('/api/topics', asyncHandler(async (req, res) => {
+// V1 List topics
+app.get('/api/v1/topics', asyncHandler(async (req, res) => {
   const userId = req.query.userId || null;
   const topics = await db.listTopics(userId);
   res.json(topics);
 }));
 
 // Get conversations by topic
-app.get('/api/topics/:topicId/conversations', asyncHandler(async (req, res) => {
+// V1 Get conversations by topic
+app.get('/api/v1/topics/:topicId/conversations', asyncHandler(async (req, res) => {
   const { topicId } = req.params;
   const userId = req.query.userId || null;
   const limit = parseInt(req.query.limit) || 50;
@@ -344,7 +461,8 @@ app.get('/api/topics/:topicId/conversations', asyncHandler(async (req, res) => {
 }));
 
 // Get conversation with full analysis
-app.get('/api/conversations/:conversationId', asyncHandler(async (req, res) => {
+// V1 Get conversation by ID
+app.get('/api/v1/conversations/:conversationId', asyncHandler(async (req, res) => {
   const { conversationId } = req.params;
 
   const conversation = await db.getConversationWithAnalysis(conversationId);
@@ -357,7 +475,8 @@ app.get('/api/conversations/:conversationId', asyncHandler(async (req, res) => {
 }));
 
 // List conversations (optionally filtered by source)
-app.get('/api/conversations', asyncHandler(async (req, res) => {
+// V1 List conversations
+app.get('/api/v1/conversations', asyncHandler(async (req, res) => {
   const userId = req.query.userId || 'anonymous';
   const limit = parseInt(req.query.limit) || 50;
   const offset = parseInt(req.query.offset) || 0;
@@ -366,17 +485,93 @@ app.get('/api/conversations', asyncHandler(async (req, res) => {
   res.json(conversations);
 }));
 
-// ============ EXISTING ENDPOINTS ============
+// ============ API VERSIONING ============
 
-app.get('/api/health', (req, res) => {
-  const apiKey = process.env.XAI_API_KEY;
+/**
+ * API Version Middleware
+ * Adds version information to responses and enables versioning
+ */
+app.use((req, res, next) => {
+  // Extract version from path or use default v1
+  const versionMatch = req.path.match(/^\/api\/v(\d+)\//);
+  req.apiVersion = versionMatch ? `v${versionMatch[1]}` : 'v1';
+
+  // Add version header to all API responses
+  if (req.path.startsWith('/api/')) {
+    res.setHeader('X-API-Version', req.apiVersion);
+    res.setHeader('X-Supported-Versions', 'v1');
+  }
+
+  next();
+});
+
+// ============ API V1 ENDPOINTS ============
+
+// Swagger API documentation
+app.use('/api/v1/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+  customCss: '.swagger-ui .topbar { display: none }',
+  customSiteTitle: 'Grok Chat API Documentation',
+}));
+
+// API Version info endpoint
+app.get('/api/v1', (req, res) => {
   res.json({
-    status: 'ok',
-    timestamp: new Date().toISOString(),
-    hasApiKey: !!apiKey,
-    // Don't expose sensitive config details
+    version: '1.0.0',
+    status: 'stable',
+    endpoints: [
+      { method: 'POST', path: '/api/v1/chat', description: 'Send chat messages to Grok' },
+      { method: 'POST', path: '/api/v1/evaluate', description: 'Evaluate multiple outputs' },
+      { method: 'POST', path: '/api/v1/upload', description: 'Upload ChatGPT export' },
+      { method: 'GET', path: '/api/v1/health', description: 'Health check endpoint' },
+      { method: 'GET', path: '/api/v1/conversations', description: 'List conversations' },
+      { method: 'GET', path: '/api/v1/conversations/:id', description: 'Get conversation by ID' },
+      { method: 'GET', path: '/api/v1/imports', description: 'List imports' },
+      { method: 'GET', path: '/api/v1/imports/:id', description: 'Get import status' },
+      { method: 'GET', path: '/api/v1/topics', description: 'List topics' },
+      { method: 'GET', path: '/api/v1/topics/:id/conversations', description: 'Get conversations by topic' },
+    ],
+    documentation: '/api/v1/docs',
   });
 });
+
+/**
+ * @swagger
+ * /api/v1/health:
+ *   get:
+ *     tags: [Health]
+ *     summary: Health check endpoint
+ *     description: Check the health status of the API, including database and API key configuration
+ *     responses:
+ *       200:
+ *         description: System is healthy
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/HealthResponse'
+ *       503:
+ *         description: System is degraded or unhealthy
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/HealthResponse'
+ */
+app.get('/api/v1/health', asyncHandler(async (req, res) => {
+  const apiKey = process.env.XAI_API_KEY;
+  const dbHealthy = await db.checkDatabase();
+
+  const health = {
+    status: dbHealthy ? 'ok' : 'degraded',
+    timestamp: new Date().toISOString(),
+    checks: {
+      apiKey: !!apiKey,
+      database: dbHealthy,
+      uptime: Math.floor(process.uptime())
+    }
+  };
+
+  const statusCode = health.status === 'ok' ? 200 : 503;
+  res.status(statusCode).json(health);
+}));
 
 
 // ============ BACKGROUND PROCESSING ============
@@ -482,6 +677,60 @@ async function processConversationsAsync(importId, userId, conversations, filePa
   }
 }
 
+// ============ BACKWARD COMPATIBILITY ALIASES ============
+// Redirect /api/* to /api/v1/* for backward compatibility
+// This ensures existing clients continue to work
+
+app.post('/api/chat', (req, res, next) => {
+  req.url = '/api/v1/chat';
+  app._router.handle(req, res, next);
+});
+
+app.post('/api/evaluate', (req, res, next) => {
+  req.url = '/api/v1/evaluate';
+  app._router.handle(req, res, next);
+});
+
+app.post('/api/upload', (req, res, next) => {
+  req.url = '/api/v1/upload';
+  app._router.handle(req, res, next);
+});
+
+app.get('/api/health', (req, res, next) => {
+  req.url = '/api/v1/health';
+  app._router.handle(req, res, next);
+});
+
+app.get('/api/imports/:importId', (req, res, next) => {
+  req.url = `/api/v1/imports/${req.params.importId}`;
+  app._router.handle(req, res, next);
+});
+
+app.get('/api/imports', (req, res, next) => {
+  req.url = '/api/v1/imports';
+  app._router.handle(req, res, next);
+});
+
+app.get('/api/topics', (req, res, next) => {
+  req.url = '/api/v1/topics';
+  app._router.handle(req, res, next);
+});
+
+app.get('/api/topics/:topicId/conversations', (req, res, next) => {
+  req.url = `/api/v1/topics/${req.params.topicId}/conversations`;
+  app._router.handle(req, res, next);
+});
+
+app.get('/api/conversations/:conversationId', (req, res, next) => {
+  req.url = `/api/v1/conversations/${req.params.conversationId}`;
+  app._router.handle(req, res, next);
+});
+
+app.get('/api/conversations', (req, res, next) => {
+  req.url = '/api/v1/conversations';
+  app._router.handle(req, res, next);
+});
+
 // 404 handler - must be after all routes
 app.use(notFoundHandler);
 
@@ -492,21 +741,92 @@ app.use(errorHandler);
 function validateEnvironment() {
   const required = ['XAI_API_KEY'];
   const missing = required.filter(key => !process.env[key]);
-  
+
   if (missing.length > 0) {
     console.error('❌ Missing required environment variables:', missing.join(', '));
     process.exit(1);
   }
-  
-  console.log('✅ All required environment variables are set');
+
+  // Validate numeric environment variables
+  const numericVars = {
+    PORT: process.env.PORT,
+    DB_PORT: process.env.DB_PORT,
+    DB_POOL_MAX: process.env.DB_POOL_MAX,
+    DB_POOL_MIN: process.env.DB_POOL_MIN,
+    RATE_LIMIT_WINDOW_MS: process.env.RATE_LIMIT_WINDOW_MS,
+    RATE_LIMIT_MAX_REQUESTS: process.env.RATE_LIMIT_MAX_REQUESTS,
+  };
+
+  for (const [key, value] of Object.entries(numericVars)) {
+    if (value && isNaN(Number(value))) {
+      console.error(`❌ Environment variable ${key} must be a number, got: ${value}`);
+      process.exit(1);
+    }
+  }
+
+  // Validate temperature range
+  const defaultTemp = parseFloat(process.env.DEFAULT_TEMPERATURE);
+  if (defaultTemp && (defaultTemp < 0 || defaultTemp > 2)) {
+    console.error(`❌ DEFAULT_TEMPERATURE must be between 0 and 2, got: ${defaultTemp}`);
+    process.exit(1);
+  }
+
+  // Validate NODE_ENV
+  const validEnvs = ['development', 'production', 'test'];
+  if (process.env.NODE_ENV && !validEnvs.includes(process.env.NODE_ENV)) {
+    console.warn(`⚠️  NODE_ENV should be one of: ${validEnvs.join(', ')}, got: ${process.env.NODE_ENV}`);
+  }
+
+  console.log('✅ All required environment variables are set and validated');
 }
 
 validateEnvironment();
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Backend server running on http://localhost:${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`CORS allowed origins: ${allowedOrigins.join(', ')}`);
   console.log(`Rate limiting: ${apiLimiter.max} requests per ${apiLimiter.windowMs / 60000} minutes`);
-  console.log('✅ Security measures active: Helmet, CORS, Rate Limiting, Input Validation');
+  console.log('✅ Security measures active: Helmet, CORS, Rate Limiting, Input Validation, Compression');
+});
+
+// Graceful shutdown handling
+function gracefulShutdown(signal) {
+  console.log(`\n⚠️  Received ${signal}, starting graceful shutdown...`);
+
+  server.close(async () => {
+    console.log('✅ HTTP server closed');
+
+    // Close database connections
+    try {
+      await db.closeDatabase();
+      console.log('✅ Database connections closed');
+    } catch (err) {
+      console.error('❌ Error closing database:', err);
+    }
+
+    console.log('✅ Graceful shutdown complete');
+    process.exit(0);
+  });
+
+  // Force shutdown after 30 seconds
+  setTimeout(() => {
+    console.error('❌ Forced shutdown after timeout');
+    process.exit(1);
+  }, 30000);
+}
+
+// Listen for termination signals
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+// Handle uncaught errors
+process.on('uncaughtException', (err) => {
+  console.error('❌ Uncaught Exception:', err);
+  gracefulShutdown('uncaughtException');
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+  gracefulShutdown('unhandledRejection');
 });
