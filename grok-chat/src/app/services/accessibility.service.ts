@@ -6,13 +6,22 @@
 import { Injectable } from '@angular/core';
 import { BehaviorSubject } from 'rxjs';
 
+interface FocusTrap {
+  element: HTMLElement;
+  handler: (e: KeyboardEvent) => void;
+}
+
 @Injectable({
   providedIn: 'root'
 })
 export class AccessibilityService {
-  private focusTrapStack: HTMLElement[] = [];
+  private focusTrapStack: FocusTrap[] = [];
   private reducedMotion$ = new BehaviorSubject<boolean>(false);
   private highContrast$ = new BehaviorSubject<boolean>(false);
+  private reducedMotionListener: ((e: MediaQueryListEvent) => void) | null = null;
+  private highContrastListener: ((e: MediaQueryListEvent) => void) | null = null;
+  private reducedMotionMediaQuery: MediaQueryList | null = null;
+  private highContrastMediaQuery: MediaQueryList | null = null;
 
   constructor() {
     this.detectReducedMotion();
@@ -23,15 +32,17 @@ export class AccessibilityService {
    * Detect if user prefers reduced motion
    */
   private detectReducedMotion(): void {
-    const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
-    this.reducedMotion$.next(mediaQuery.matches);
+    this.reducedMotionMediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    this.reducedMotion$.next(this.reducedMotionMediaQuery.matches);
 
-    mediaQuery.addEventListener('change', (e) => {
+    this.reducedMotionListener = (e: MediaQueryListEvent) => {
       this.reducedMotion$.next(e.matches);
       this.applyReducedMotion(e.matches);
-    });
+    };
 
-    if (mediaQuery.matches) {
+    this.reducedMotionMediaQuery.addEventListener('change', this.reducedMotionListener);
+
+    if (this.reducedMotionMediaQuery.matches) {
       this.applyReducedMotion(true);
     }
   }
@@ -40,13 +51,15 @@ export class AccessibilityService {
    * Detect if user prefers high contrast
    */
   private detectHighContrast(): void {
-    const mediaQuery = window.matchMedia('(prefers-contrast: high)');
-    this.highContrast$.next(mediaQuery.matches);
+    this.highContrastMediaQuery = window.matchMedia('(prefers-contrast: high)');
+    this.highContrast$.next(this.highContrastMediaQuery.matches);
 
-    mediaQuery.addEventListener('change', (e) => {
+    this.highContrastListener = (e: MediaQueryListEvent) => {
       this.highContrast$.next(e.matches);
       this.applyHighContrast(e.matches);
-    });
+    };
+
+    this.highContrastMediaQuery.addEventListener('change', this.highContrastListener);
   }
 
   /**
@@ -77,8 +90,6 @@ export class AccessibilityService {
    * Trap focus within a specific element
    */
   trapFocus(element: HTMLElement): void {
-    this.focusTrapStack.push(element);
-    
     const focusableElements = element.querySelectorAll<HTMLElement>(
       'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
     );
@@ -105,6 +116,7 @@ export class AccessibilityService {
     };
 
     element.addEventListener('keydown', handleKeyDown);
+    this.focusTrapStack.push({ element, handler: handleKeyDown });
     firstElement.focus();
   }
 
@@ -112,7 +124,10 @@ export class AccessibilityService {
    * Release focus trap
    */
   releaseFocusTrap(): void {
-    this.focusTrapStack.pop();
+    const trap = this.focusTrapStack.pop();
+    if (trap) {
+      trap.element.removeEventListener('keydown', trap.handler);
+    }
   }
 
   /**
@@ -160,6 +175,25 @@ export class AccessibilityService {
     if (main) {
       (main as HTMLElement).focus();
       (main as HTMLElement).scrollIntoView({ behavior: 'smooth' });
+    }
+  }
+
+  /**
+   * Cleanup method to remove event listeners
+   * Call this when the service is destroyed (not common for root services)
+   */
+  ngOnDestroy(): void {
+    // Remove media query listeners
+    if (this.reducedMotionMediaQuery && this.reducedMotionListener) {
+      this.reducedMotionMediaQuery.removeEventListener('change', this.reducedMotionListener);
+    }
+    if (this.highContrastMediaQuery && this.highContrastListener) {
+      this.highContrastMediaQuery.removeEventListener('change', this.highContrastListener);
+    }
+
+    // Remove all focus trap listeners
+    while (this.focusTrapStack.length > 0) {
+      this.releaseFocusTrap();
     }
   }
 }

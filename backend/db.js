@@ -17,8 +17,8 @@ function initDatabase() {
   const config = process.env.DATABASE_URL
     ? {
         connectionString: process.env.DATABASE_URL,
-        ssl: process.env.NODE_ENV === 'production' 
-          ? { rejectUnauthorized: false } 
+        ssl: process.env.NODE_ENV === 'production'
+          ? { rejectUnauthorized: true }
           : false
       }
     : {
@@ -26,9 +26,15 @@ function initDatabase() {
         host: process.env.DB_HOST || 'localhost',
         port: process.env.DB_PORT || 5432,
         database: process.env.DB_NAME || 'grok_chat',
-        user: process.env.DB_USER || 'postgres',
-        password: process.env.DB_PASSWORD || 'postgres',
+        user: process.env.DB_USER,
+        password: process.env.DB_PASSWORD,
       };
+
+  // Validate required credentials for non-DATABASE_URL configurations
+  if (!process.env.DATABASE_URL && (!config.user || !config.password)) {
+    console.error('❌ Database credentials not configured. Please set DB_USER and DB_PASSWORD environment variables.');
+    throw new Error('Database credentials required');
+  }
 
   pool = new Pool(config);
 

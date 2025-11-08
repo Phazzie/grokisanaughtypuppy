@@ -1,6 +1,8 @@
-import { Component, OnInit, signal } from '@angular/core';
+import { Component, OnInit, OnDestroy, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { Subject } from 'rxjs';
+import { takeUntil } from 'rxjs/operators';
 import {
   ChatService,
   Topic,
@@ -19,7 +21,9 @@ type ViewMode = 'upload' | 'topics' | 'conversations' | 'viewer';
   templateUrl: './conversation-library.component.html',
   styleUrls: ['./conversation-library.component.scss']
 })
-export class ConversationLibraryComponent implements OnInit {
+export class ConversationLibraryComponent implements OnInit, OnDestroy {
+  private destroy$ = new Subject<void>();
+
   // State signals
   protected viewMode = signal<ViewMode>('upload');
   protected topics = signal<Topic[]>([]);
@@ -49,6 +53,8 @@ export class ConversationLibraryComponent implements OnInit {
     if (this.uploadPollingInterval) {
       clearInterval(this.uploadPollingInterval);
     }
+    this.destroy$.next();
+    this.destroy$.complete();
   }
 
   // ============ FILE UPLOAD ============
@@ -70,73 +76,76 @@ export class ConversationLibraryComponent implements OnInit {
     this.isLoading.set(true);
     this.error.set('');
 
-    this.chatService.uploadConversations(this.selectedFile, this.userId).subscribe({
-      next: (response) => {
-        console.log('Upload started:', response);
-        this.uploadProgress.set({
-          id: response.importId,
-          user_id: this.userId,
-          filename: this.selectedFile!.name,
-          file_size: this.selectedFile!.size,
-          status: 'processing',
-          total_conversations: response.totalConversations,
-          processed_conversations: 0,
-          created_at: new Date().toISOString()
-        });
+    this.chatService.uploadConversations(this.selectedFile, this.userId)
+      .pipe(takeUntil(this.destroy$))
+      .subscribe({
+        next: (response) => {
+          this.uploadProgress.set({
+            id: response.importId,
+            user_id: this.userId,
+            filename: this.selectedFile!.name,
+            file_size: this.selectedFile!.size,
+            status: 'processing',
+            total_conversations: response.totalConversations,
+            processed_conversations: 0,
+            created_at: new Date().toISOString()
+          });
 
-        // Start polling for progress
-        this.startProgressPolling(response.importId);
+          // Start polling for progress
+          this.startProgressPolling(response.importId);
 
-        this.selectedFile = null;
-        (document.getElementById('fileInput') as HTMLInputElement).value = '';
-      },
-      error: (err) => {
-        console.error('Upload error:', err);
-        this.error.set(err.error?.error || 'Failed to upload file');
-        this.isLoading.set(false);
-      }
-    });
+          this.selectedFile = null;
+          (document.getElementById('fileInput') as HTMLInputElement).value = '';
+        },
+        error: (err) => {
+          this.error.set(err.error?.error || 'Failed to upload file');
+          this.isLoading.set(false);
+        }
+      });
   }
 
   startProgressPolling(importId: string) {
     this.uploadPollingInterval = setInterval(() => {
-      this.chatService.getImportStatus(importId, this.userId).subscribe({
-        next: (importStatus) => {
-          this.uploadProgress.set(importStatus);
+      this.chatService.getImportStatus(importId, this.userId)
+        .pipe(takeUntil(this.destroy$))
+        .subscribe({
+          next: (importStatus) => {
+            this.uploadProgress.set(importStatus);
 
-          if (importStatus.status === 'completed' || importStatus.status === 'failed') {
+            if (importStatus.status === 'completed' || importStatus.status === 'failed') {
+              clearInterval(this.uploadPollingInterval);
+              this.isLoading.set(false);
+
+              if (importStatus.status === 'completed') {
+                this.loadTopics();
+                this.loadImports();
+              } else {
+                this.error.set(importStatus.error_message || 'Import failed');
+              }
+            }
+          },
+          error: (err) => {
             clearInterval(this.uploadPollingInterval);
             this.isLoading.set(false);
-
-            if (importStatus.status === 'completed') {
-              this.loadTopics();
-              this.loadImports();
-            } else {
-              this.error.set(importStatus.error_message || 'Import failed');
-            }
+            this.error.set('Failed to check import status');
           }
-        },
-        error: (err) => {
-          console.error('Error polling import status:', err);
-          clearInterval(this.uploadPollingInterval);
-          this.isLoading.set(false);
-        }
-      });
+        });
     }, 2000); // Poll every 2 seconds
   }
 
   // ============ TOPICS ============
 
   loadTopics() {
-    this.chatService.listTopics(this.userId).subscribe({
-      next: (topics) => {
-        this.topics.set(topics);
-      },
-      error: (err) => {
-        console.error('Error loading topics:', err);
-        this.error.set('Failed to load topics');
-      }
-    });
+    this.chatService.listTopics(this.userId)
+      .pipe(takeUntil(this.destroy$))
+      .subscribe({
+        next: (topics) => {
+          this.topics.set(topics);
+        },
+        error: (err) => {
+          this.error.set('Failed to load topics');
+        }
+      });
   }
 
   selectTopic(topic: Topic) {
@@ -147,48 +156,52 @@ export class ConversationLibraryComponent implements OnInit {
 
   loadConversationsByTopic(topicId: string) {
     this.isLoading.set(true);
-    this.chatService.getConversationsByTopic(topicId, this.userId).subscribe({
-      next: (conversations) => {
-        this.conversations.set(conversations);
-        this.isLoading.set(false);
-      },
-      error: (err) => {
-        console.error('Error loading conversations:', err);
-        this.error.set('Failed to load conversations');
-        this.isLoading.set(false);
-      }
-    });
+    this.chatService.getConversationsByTopic(topicId, this.userId)
+      .pipe(takeUntil(this.destroy$))
+      .subscribe({
+        next: (conversations) => {
+          this.conversations.set(conversations);
+          this.isLoading.set(false);
+        },
+        error: (err) => {
+          this.error.set('Failed to load conversations');
+          this.isLoading.set(false);
+        }
+      });
   }
 
   // ============ CONVERSATIONS ============
 
   selectConversation(conversation: Conversation) {
     this.isLoading.set(true);
-    this.chatService.getConversation(conversation.id).subscribe({
-      next: (fullConversation) => {
-        this.selectedConversation.set(fullConversation);
-        this.viewMode.set('viewer');
-        this.isLoading.set(false);
-      },
-      error: (err) => {
-        console.error('Error loading conversation:', err);
-        this.error.set('Failed to load conversation details');
-        this.isLoading.set(false);
-      }
-    });
+    this.chatService.getConversation(conversation.id)
+      .pipe(takeUntil(this.destroy$))
+      .subscribe({
+        next: (fullConversation) => {
+          this.selectedConversation.set(fullConversation);
+          this.viewMode.set('viewer');
+          this.isLoading.set(false);
+        },
+        error: (err) => {
+          this.error.set('Failed to load conversation details');
+          this.isLoading.set(false);
+        }
+      });
   }
 
   // ============ IMPORTS ============
 
   loadImports() {
-    this.chatService.listImports(this.userId).subscribe({
-      next: (imports) => {
-        this.imports.set(imports);
-      },
-      error: (err) => {
-        console.error('Error loading imports:', err);
-      }
-    });
+    this.chatService.listImports(this.userId)
+      .pipe(takeUntil(this.destroy$))
+      .subscribe({
+        next: (imports) => {
+          this.imports.set(imports);
+        },
+        error: (err) => {
+          // Silently fail - imports list is not critical
+        }
+      });
   }
 
   // ============ NAVIGATION ============

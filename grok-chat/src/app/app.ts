@@ -1,8 +1,10 @@
-import { Component, signal } from '@angular/core';
+import { Component, signal, OnDestroy } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClientModule } from '@angular/common/http';
+import { Subject } from 'rxjs';
+import { takeUntil } from 'rxjs/operators';
 import { ChatService, Message } from './services/chat.service';
 import { ConversationLibraryComponent } from './conversation-library/conversation-library.component';
 
@@ -19,8 +21,9 @@ interface ChatBranch {
   styleUrl: './app.scss',
   standalone: true
 })
-export class App {
+export class App implements OnDestroy {
   protected readonly title = signal('Grok Chat');
+  private destroy$ = new Subject<void>();
 
   // View mode: 'chat' or 'library'
   viewMode: 'chat' | 'library' = 'chat';
@@ -63,30 +66,34 @@ export class App {
     this.testJoke = '';
     this.error = '';
 
-    this.chatService.testApiWithJoke().subscribe({
-      next: (response) => {
-        this.testJoke = response.choices[0].message.content;
-        this.testingApi = false;
-      },
-      error: (err) => {
-        this.error = 'API test failed: ' + (err.error?.error || 'Please check your API key configuration');
-        this.testingApi = false;
-      }
-    });
+    this.chatService.testApiWithJoke()
+      .pipe(takeUntil(this.destroy$))
+      .subscribe({
+        next: (response) => {
+          this.testJoke = response.choices[0].message.content;
+          this.testingApi = false;
+        },
+        error: (err) => {
+          this.error = 'API test failed: ' + (err.error?.error || 'Please check your API key configuration');
+          this.testingApi = false;
+        }
+      });
   }
 
   checkApiKey() {
-    this.chatService.checkHealth().subscribe({
-      next: (response) => {
-        this.apiKeyConfigured = response.hasApiKey;
-        if (!this.apiKeyConfigured) {
-          this.error = 'API Key not configured. Please set XAI_API_KEY in backend/.env';
+    this.chatService.checkHealth()
+      .pipe(takeUntil(this.destroy$))
+      .subscribe({
+        next: (response) => {
+          this.apiKeyConfigured = response.hasApiKey;
+          if (!this.apiKeyConfigured) {
+            this.error = 'API Key not configured. Please set XAI_API_KEY in backend/.env';
+          }
+        },
+        error: () => {
+          this.error = 'Cannot connect to backend server. Please start the backend server.';
         }
-      },
-      error: () => {
-        this.error = 'Cannot connect to backend server. Please start the backend server.';
-      }
-    });
+      });
   }
 
   sendMessage() {
@@ -111,21 +118,23 @@ export class App {
   }
 
   sendSingleMessage() {
-    this.chatService.sendMessage(this.messages, this.systemPrompt, this.temperature).subscribe({
-      next: (response) => {
-        const assistantMessage: Message = {
-          role: 'assistant',
-          content: response.choices[0].message.content,
-          timestamp: new Date()
-        };
-        this.messages.push(assistantMessage);
-        this.isLoading = false;
-      },
-      error: (error) => {
-        this.error = error.error?.error || 'Failed to get response';
-        this.isLoading = false;
-      }
-    });
+    this.chatService.sendMessage(this.messages, this.systemPrompt, this.temperature)
+      .pipe(takeUntil(this.destroy$))
+      .subscribe({
+        next: (response) => {
+          const assistantMessage: Message = {
+            role: 'assistant',
+            content: response.choices[0].message.content,
+            timestamp: new Date()
+          };
+          this.messages.push(assistantMessage);
+          this.isLoading = false;
+        },
+        error: (error) => {
+          this.error = error.error?.error || 'Failed to get response';
+          this.isLoading = false;
+        }
+      });
   }
 
   sendComparisonMessages(userMessage: Message) {
@@ -139,26 +148,28 @@ export class App {
     let completed = 0;
     temperatures.forEach((temp, index) => {
       const branchMessages = this.comparisonBranches[index].messages.slice(0, -1);
-      this.chatService.sendMessage(branchMessages, this.systemPrompt, temp).subscribe({
-        next: (response) => {
-          this.comparisonBranches[index].messages.push({
-            role: 'assistant',
-            content: response.choices[0].message.content,
-            timestamp: new Date()
-          });
-          completed++;
-          if (completed === temperatures.length) {
-            this.isLoading = false;
+      this.chatService.sendMessage(branchMessages, this.systemPrompt, temp)
+        .pipe(takeUntil(this.destroy$))
+        .subscribe({
+          next: (response) => {
+            this.comparisonBranches[index].messages.push({
+              role: 'assistant',
+              content: response.choices[0].message.content,
+              timestamp: new Date()
+            });
+            completed++;
+            if (completed === temperatures.length) {
+              this.isLoading = false;
+            }
+          },
+          error: (error) => {
+            this.error = error.error?.error || 'Failed to get response';
+            completed++;
+            if (completed === temperatures.length) {
+              this.isLoading = false;
+            }
           }
-        },
-        error: (error) => {
-          this.error = error.error?.error || 'Failed to get response';
-          completed++;
-          if (completed === temperatures.length) {
-            this.isLoading = false;
-          }
-        }
-      });
+        });
     });
   }
 
@@ -186,17 +197,19 @@ export class App {
 
     const context = this.messages[this.messages.length - 1]?.content || '';
 
-    this.chatService.evaluateOutputs(outputs, this.evaluationCriteria, context).subscribe({
-      next: (response) => {
-        this.evaluationResult = response.choices[0].message.content;
-        this.showEvaluation = true;
-        this.evaluationLoading = false;
-      },
-      error: (error) => {
-        this.error = error.error?.error || 'Failed to evaluate outputs';
-        this.evaluationLoading = false;
-      }
-    });
+    this.chatService.evaluateOutputs(outputs, this.evaluationCriteria, context)
+      .pipe(takeUntil(this.destroy$))
+      .subscribe({
+        next: (response) => {
+          this.evaluationResult = response.choices[0].message.content;
+          this.showEvaluation = true;
+          this.evaluationLoading = false;
+        },
+        error: (error) => {
+          this.error = error.error?.error || 'Failed to evaluate outputs';
+          this.evaluationLoading = false;
+        }
+      });
   }
 
   toggleComparisonMode() {
@@ -258,6 +271,11 @@ export class App {
       this.comparisonMode = false;
       this.error = '';
     }
+  }
+
+  ngOnDestroy() {
+    this.destroy$.next();
+    this.destroy$.complete();
   }
 }
 
