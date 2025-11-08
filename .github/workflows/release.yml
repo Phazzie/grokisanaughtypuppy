@@ -102,11 +102,20 @@ jobs:
         with:
           script: |
             const previousVersion = '${{ steps.version.outputs.previous_version }}';
-            const previousDate = new Date((await github.rest.git.getRef({
+            // Get the SHA for the previous version tag
+            const refData = await github.rest.git.getRef({
               owner: context.repo.owner,
               repo: context.repo.repo,
               ref: `tags/${previousVersion}`
-            })).data.object.sha);
+            });
+            const previousSha = refData.data.object.sha;
+            // Fetch the commit object to get the commit date
+            const commitData = await github.rest.git.getCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: previousSha
+            });
+            const previousDate = new Date(commitData.data.committer.date);
 
             const prs = await github.rest.pulls.list({
               owner: context.repo.owner,

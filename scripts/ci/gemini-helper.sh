@@ -59,12 +59,22 @@ call_gemini_api() {
 
     log_info "Calling Gemini API..."
 
-    # Using curl to call Gemini API
-    # Adjust endpoint and format based on actual Gemini API
+    # Check if jq is available for safe JSON encoding
+    if ! command -v jq &> /dev/null; then
+        log_error "jq is required but not installed. Please install jq."
+        return 1
+    fi
+
+    # Safely construct JSON payload using jq
+    local json_payload
+    json_payload=$(jq -n --arg prompt "$prompt" '{"contents":[{"parts":[{"text":$prompt}]}]}')
+
+    # Using curl to call Gemini API with API key in header (more secure)
     curl -s -X POST \
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=$GEMINI_API_KEY" \
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent" \
+        -H "x-goog-api-key: $GEMINI_API_KEY" \
         -H 'Content-Type: application/json' \
-        -d "{\"contents\":[{\"parts\":[{\"text\":\"$prompt\"}]}]}" \
+        -d "$json_payload" \
         > "$output_file" 2>&1 || {
             log_error "API call failed"
             return 1
