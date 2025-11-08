@@ -211,9 +211,20 @@ jobs:
         working-directory: grok-chat
         run: |
           echo "📦 Build Output:"
-          du -sh dist/grok-chat/browser || du -sh dist/
-          echo "📊 Detailed breakdown:"
-          du -h dist/grok-chat/browser/* || du -h dist/* || echo "Build directory structure may vary"
+          # Check for expected Angular build output directory
+          if [ -d dist/grok-chat/browser ]; then
+            du -sh dist/grok-chat/browser
+            echo "📊 Detailed breakdown:"
+            du -h dist/grok-chat/browser/*
+          elif [ -d dist ]; then
+            echo "⚠️ dist/grok-chat/browser not found, falling back to dist/"
+            du -sh dist
+            echo "📊 Detailed breakdown:"
+            du -h dist/*
+          else
+            echo "❌ No build output directory found (dist/grok-chat/browser or dist/)"
+          fi
+          # The build output directory may vary if Angular config changes or build fails.
 
       - name: 📤 Upload Build Artifacts
         uses: actions/upload-artifact@v4
