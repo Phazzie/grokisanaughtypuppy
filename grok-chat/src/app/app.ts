@@ -4,6 +4,9 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClientModule } from '@angular/common/http';
 import { ChatService, Message } from './services/chat.service';
+import { ToastService } from './services/toast.service';
+import { AnalyticsService } from './services/analytics.service';
+import { AccessibilityService } from './services/accessibility.service';
 import { ConversationLibraryComponent } from './conversation-library/conversation-library.component';
 
 interface ChatBranch {
@@ -50,8 +53,46 @@ export class App {
   testingApi = false;
   testJoke = '';
 
-  constructor(private chatService: ChatService) {
+  // Toast notifications - expose to template
+  toasts$ = this.toastService.toasts$;
+
+  // Offline detection
+  isOnline = signal(navigator.onLine);
+
+  constructor(
+    private chatService: ChatService,
+    private toastService: ToastService,
+    private analytics: AnalyticsService,
+    private accessibility: AccessibilityService
+  ) {
     this.checkApiKey();
+    this.initializeServices();
+    this.setupOfflineDetection();
+  }
+
+  private initializeServices() {
+    // Track page view
+    this.analytics.trackPageView('chat-home');
+
+    // Track app startup
+    this.analytics.trackEvent('app_startup', {
+      timestamp: new Date().toISOString(),
+      userAgent: navigator.userAgent,
+    });
+  }
+
+  private setupOfflineDetection() {
+    window.addEventListener('online', () => {
+      this.isOnline.set(true);
+      this.toastService.success('Connection restored');
+      this.analytics.trackEvent('connection_restored');
+    });
+
+    window.addEventListener('offline', () => {
+      this.isOnline.set(false);
+      this.toastService.warning('You are offline');
+      this.analytics.trackEvent('connection_lost');
+    });
   }
 
   switchView(mode: 'chat' | 'library') {
@@ -81,10 +122,12 @@ export class App {
         this.apiKeyConfigured = response.hasApiKey;
         if (!this.apiKeyConfigured) {
           this.error = 'API Key not configured. Please set XAI_API_KEY in backend/.env';
+          this.toastService.error('API Key not configured');
         }
       },
       error: () => {
         this.error = 'Cannot connect to backend server. Please start the backend server.';
+        this.toastService.error('Cannot connect to backend server');
       }
     });
   }
@@ -223,7 +266,7 @@ export class App {
         messages: [...this.messages],
         timestamp: new Date()
       });
-      alert('Conversation saved!');
+      this.toastService.success('Conversation saved successfully!');
     }
   }
 

@@ -16,7 +16,7 @@ This isn't just another chat app. We're pushing boundaries with:
 - **🎭 Personality Customization** - Full system prompt control with temperature visualization
 - **🤖 AI-Powered CI/CD** - Advanced automation with Claude/Gemini integration for code review, test generation, and self-healing pipelines
 
-## 🚀 Quick Start
+## �� Quick Start
 
 ### Prerequisites
 - Node.js 18+
@@ -362,5 +362,3 @@ ISC - Free for personal and commercial use
 ---
 
 **Built with 💜 by developers who believe AI chat shouldn't be boring**
-
-*Experience the future of AI conversation at* `http://localhost:4200` 🚀✨
