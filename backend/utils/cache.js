@@ -15,12 +15,31 @@ const cache = new NodeCache({
 
 /**
  * Generate cache key from request body
+ * Uses deterministic JSON serialization to ensure consistent cache keys
  */
 function generateCacheKey(data) {
+  // Sort object keys recursively for deterministic stringification
+  const sortedData = sortKeys(data);
   return crypto
     .createHash('md5')
-    .update(JSON.stringify(data))
+    .update(JSON.stringify(sortedData))
     .digest('hex');
+}
+
+/**
+ * Recursively sort object keys for deterministic JSON serialization
+ */
+function sortKeys(obj) {
+  if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) {
+    return obj;
+  }
+  
+  return Object.keys(obj)
+    .sort()
+    .reduce((result, key) => {
+      result[key] = sortKeys(obj[key]);
+      return result;
+    }, {});
 }
 
 /**

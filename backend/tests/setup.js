@@ -49,12 +49,9 @@ global.testHelpers = {
   mockNext: () => jest.fn(),
 };
 
-// Suppress console output during tests (optional)
-global.console = {
-  ...console,
-  log: jest.fn(),
-  error: jest.fn(),
-  warn: jest.fn(),
-  info: jest.fn(),
-  debug: jest.fn(),
-};
+// Suppress console output during tests (optional, can be restored per-test)
+jest.spyOn(console, 'log').mockImplementation();
+jest.spyOn(console, 'error').mockImplementation();
+jest.spyOn(console, 'warn').mockImplementation();
+jest.spyOn(console, 'info').mockImplementation();
+jest.spyOn(console, 'debug').mockImplementation();

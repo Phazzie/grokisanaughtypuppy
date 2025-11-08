@@ -3,8 +3,9 @@ import { RouterOutlet } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClientModule } from '@angular/common/http';
+import { Observable } from 'rxjs';
 import { ChatService, Message } from './services/chat.service';
-import { ToastService } from './services/toast.service';
+import { ToastService, Toast } from './services/toast.service';
 import { AnalyticsService } from './services/analytics.service';
 import { AccessibilityService } from './services/accessibility.service';
 import { ConversationLibraryComponent } from './conversation-library/conversation-library.component';
@@ -53,8 +54,8 @@ export class App {
   testingApi = false;
   testJoke = '';
 
-  // Toast notifications - expose to template
-  toasts$ = this.toastService.toasts$;
+  // Toast notifications - expose to template (initialized in constructor)
+  toasts$!: Observable<Toast[]>;
 
   // Offline detection
   isOnline = signal(navigator.onLine);
@@ -65,6 +66,7 @@ export class App {
     private analytics: AnalyticsService,
     private accessibility: AccessibilityService
   ) {
+    this.toasts$ = this.toastService.toasts;
     this.checkApiKey();
     this.initializeServices();
     this.setupOfflineDetection();
