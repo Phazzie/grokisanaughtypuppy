@@ -525,7 +525,7 @@ Week 4: Automated test generation
 
 ### 4. Cost Management
 - Use GitHub Copilot (included with subscription)
-- Gemini has generous free tier
+- Gemini offers a free tier (check current limits at https://ai.google.dev/pricing)
 - Claude API is pay-per-use
 - Set spending limits
 

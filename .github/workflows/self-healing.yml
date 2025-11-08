@@ -101,7 +101,7 @@ jobs:
       - name: 🔍 Check for Changes
         id: changes
         run: |
-          if git diff --quiet; then
+          if git diff --quiet HEAD; then
             echo "has_changes=false" >> $GITHUB_OUTPUT
             echo "ℹ️ No changes to commit"
           else
@@ -116,7 +116,7 @@ jobs:
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
           git add backend/package-lock.json grok-chat/package-lock.json || true
-          git commit -m "🔧 Auto-fix: Update dependencies [skip ci]" || echo "Nothing to commit"
+          git commit -m "🔧 Auto-fix: Update dependencies [skip ci]"
           git push || echo "⚠️ Push failed - may need force push or PR"
 
   auto-fix-linting:
@@ -159,7 +159,7 @@ jobs:
       - name: 🔍 Check for Changes
         id: changes
         run: |
-          if git diff --quiet; then
+          if git diff --quiet HEAD; then
             echo "has_changes=false" >> $GITHUB_OUTPUT
             echo "ℹ️ No changes to commit"
           else
@@ -294,7 +294,7 @@ jobs:
       - name: 🔍 Check for Changes
         id: changes
         run: |
-          if git diff --quiet; then
+          if git diff --quiet HEAD; then
             echo "has_changes=false" >> $GITHUB_OUTPUT
           else
             echo "has_changes=true" >> $GITHUB_OUTPUT
