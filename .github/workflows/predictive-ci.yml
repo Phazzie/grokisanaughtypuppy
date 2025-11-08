@@ -1,8 +1,7 @@
-name: 🔮 Predictive CI - Self-Learning Pipeline
+name: 🔮 Predictive CI - Smart Testing
 
-# UNCONVENTIONAL: Learns from test failures over time to predict issues before tests run
-# Uses official GitHub Actions for AI providers
-# Builds institutional knowledge in .ai-memory/ directory
+# Analyzes changes to predict risk and run appropriate tests
+# Free tier using Gemini
 
 on:
   push:
@@ -12,114 +11,73 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
   pull-requests: write
-  issues: write
-
-env:
-  MEMORY_DIR: .ai-memory
-  MAX_COST_USD: 5
 
 jobs:
-  # ==========================================================================
-  # Learn from historical failures
-  # ==========================================================================
-  analyze-history:
-    name: 📚 Analyze Historical Test Failures
+  analyze-risk:
+    name: 📊 Analyze Change Risk
     runs-on: ubuntu-latest
     outputs:
-      predictions: ${{ steps.predict.outputs.response }}
+      risk_score: ${{ steps.risk.outputs.score }}
     steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          fetch-depth: 100  # Get last 100 commits for analysis
+          fetch-depth: 100
 
-      - name: 📊 Gather Historical Data
-        id: history
+      - name: Get Changed Files
+        id: files
         run: |
-          # Create memory directory if it doesn't exist
-          mkdir -p ${{ env.MEMORY_DIR }}
-
-          # Get recent test failures from git log
-          git log --since="30 days ago" --grep="test.*fail" --grep="error" --all --oneline > ${{ env.MEMORY_DIR }}/recent_failures.txt || touch ${{ env.MEMORY_DIR }}/recent_failures.txt
-
-          # Get changed files in this commit/PR
           if [ "${{ github.event_name }}" == "pull_request" ]; then
-            git diff --name-only origin/${{ github.event.pull_request.base.ref }}...HEAD > changed_files.txt
+            git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.sha }} > changed_files.txt
           else
             git diff --name-only HEAD~1 HEAD > changed_files.txt || git ls-files > changed_files.txt
           fi
 
-          # Get list of files that frequently cause test failures
-          if [ -f "${{ env.MEMORY_DIR }}/failure_patterns.json" ]; then
-            echo "📖 Loading existing failure patterns..."
-            cat ${{ env.MEMORY_DIR }}/failure_patterns.json
-          else
-            echo '{"patterns": []}' > ${{ env.MEMORY_DIR }}/failure_patterns.json
-          fi
-
-          echo "Files changed in this commit:"
+          echo "Files changed:"
           cat changed_files.txt
 
-      - name: 🔮 AI Prediction Analysis (Gemini - Free!)
-        id: predict
-        if: ${{ secrets.GEMINI_API_KEY != '' || secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+          # Count critical files (backend, database, security)
+          CRITICAL=$(grep -E '(auth|security|db\.js|server\.js|migration)' changed_files.txt | wc -l || echo "0")
+          echo "critical_files=$CRITICAL" >> $GITHUB_OUTPUT
+
+      - name: Analyze with Gemini
+        if: ${{ secrets.GEMINI_API_KEY != '' }}
         uses: google-github-actions/run-gemini-cli@v1
         with:
           gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
           prompt: |
-            You are a predictive CI system. Analyze this code change and predict what might fail.
+            Analyze the risk of these code changes:
 
-            **Historical Context:**
-            $(cat ${{ env.MEMORY_DIR }}/recent_failures.txt 2>/dev/null || echo "No recent failures")
+            Changed files: $(cat changed_files.txt)
+            Critical files count: ${{ steps.files.outputs.critical_files }}
 
-            **Known Failure Patterns:**
-            $(cat ${{ env.MEMORY_DIR }}/failure_patterns.json)
+            Provide a risk score from 1-10 and explain:
+            - What could break
+            - What tests should be run
+            - Any performance concerns
 
-            **Files Changed in This Commit:**
-            $(cat changed_files.txt)
-
-            Based on historical patterns, predict:
-            1. **High Risk Areas** - What's likely to break?
-            2. **Test Recommendations** - What tests should we run first?
-            3. **Performance Concerns** - Will this slow things down?
-            4. **Integration Issues** - What might break in other areas?
-
-            Output JSON:
-            {
-              "risk_score": 1-10,
-              "high_risk_files": ["file1.js", "file2.js"],
-              "predicted_failures": [{"test": "...", "reason": "...", "confidence": 1-10}],
-              "recommended_test_order": ["test1", "test2"],
-              "performance_concerns": ["..."],
-              "integration_warnings": ["..."]
-            }
-
-      - name: 💾 Save Predictions
+      - name: Calculate Risk Score
+        id: risk
         run: |
-          echo '${{ steps.predict.outputs.response }}' > ${{ env.MEMORY_DIR }}/current_predictions.json
-          echo "📊 Predictions:"
-          cat ${{ env.MEMORY_DIR }}/current_predictions.json
+          CRITICAL=${{ steps.files.outputs.critical_files }}
+          if [ "$CRITICAL" -gt 5 ]; then
+            echo "score=high" >> $GITHUB_OUTPUT
+          elif [ "$CRITICAL" -gt 2 ]; then
+            echo "score=medium" >> $GITHUB_OUTPUT
+          else
+            echo "score=low" >> $GITHUB_OUTPUT
+          fi
+          echo "Risk level: $(cat $GITHUB_OUTPUT)"
 
-      - name: 📤 Upload Predictions
-        uses: actions/upload-artifact@v4
-        with:
-          name: ai-predictions
-          path: ${{ env.MEMORY_DIR }}/current_predictions.json
-
-  # ==========================================================================
-  # Run smart tests based on predictions
-  # ==========================================================================
-  smart-testing:
-    name: 🧪 Smart Test Execution
+  run-tests:
+    name: 🧪 Run Tests Based on Risk
     runs-on: ubuntu-latest
-    needs: analyze-history
+    needs: analyze-risk
     steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: 📦 Setup Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '18'
@@ -128,177 +86,23 @@ jobs:
             backend/package-lock.json
             grok-chat/package-lock.json
 
-      - name: 📥 Download Predictions
-        uses: actions/download-artifact@v4
-        with:
-          name: ai-predictions
-          path: predictions/
-
-      - name: 📊 Check Risk Level
-        id: risk
+      - name: Install Dependencies
         run: |
-          RISK=$(jq -r '.risk_score // 5' predictions/current_predictions.json)
-          echo "risk_score=$RISK" >> $GITHUB_OUTPUT
-          echo "🎯 Predicted Risk Score: $RISK/10"
+          cd backend && npm ci
+          cd ../grok-chat && npm ci
 
-          if [ "$RISK" -gt 7 ]; then
-            echo "⚠️ HIGH RISK - Running comprehensive tests"
-            echo "test_strategy=comprehensive" >> $GITHUB_OUTPUT
-          elif [ "$RISK" -gt 4 ]; then
-            echo "📊 MEDIUM RISK - Running targeted tests"
-            echo "test_strategy=targeted" >> $GITHUB_OUTPUT
+      - name: Run Tests (Risk-Based)
+        run: |
+          RISK="${{ needs.analyze-risk.outputs.risk_score }}"
+          echo "Risk level: $RISK"
+
+          if [ "$RISK" == "high" ]; then
+            echo "🔴 HIGH RISK - Running full test suite"
+            cd grok-chat && npm test -- --watch=false --browsers=ChromeHeadless --code-coverage || echo "Tests not fully configured"
+          elif [ "$RISK" == "medium" ]; then
+            echo "🟡 MEDIUM RISK - Running targeted tests"
+            cd grok-chat && npm test -- --watch=false --browsers=ChromeHeadless || echo "Tests not fully configured"
           else
-            echo "✅ LOW RISK - Running smoke tests"
-            echo "test_strategy=smoke" >> $GITHUB_OUTPUT
+            echo "🟢 LOW RISK - Running smoke tests only"
+            cd grok-chat && npm run build
           fi
-
-      - name: 📦 Install Backend Dependencies
-        working-directory: backend
-        run: npm ci
-
-      - name: 📦 Install Frontend Dependencies
-        working-directory: grok-chat
-        run: npm ci
-
-      - name: 🧪 Run Backend Tests
-        working-directory: backend
-        run: |
-          if [ "${{ steps.risk.outputs.test_strategy }}" == "comprehensive" ]; then
-            npm test || echo "⚠️ Backend tests not implemented yet"
-          else
-            echo "✅ Skipping backend tests (low risk)"
-          fi
-        continue-on-error: true
-
-      - name: 🧪 Run Frontend Tests
-        working-directory: grok-chat
-        run: |
-          if [ "${{ steps.risk.outputs.test_strategy }}" == "smoke" ]; then
-            echo "✅ Smoke tests only"
-            npm test -- --watch=false --browsers=ChromeHeadless --include='**/*.spec.ts' || true
-          else
-            echo "🔍 Full test suite"
-            npm test -- --watch=false --browsers=ChromeHeadless --code-coverage
-          fi
-        continue-on-error: true
-
-      - name: 📊 Record Test Results
-        run: |
-          mkdir -p ${{ env.MEMORY_DIR }}
-
-          # Record whether tests passed or failed
-          echo "timestamp: $(date -Iseconds)" >> ${{ env.MEMORY_DIR }}/test_results.log
-          echo "risk_score: ${{ steps.risk.outputs.risk_score }}" >> ${{ env.MEMORY_DIR }}/test_results.log
-          echo "test_strategy: ${{ steps.risk.outputs.test_strategy }}" >> ${{ env.MEMORY_DIR }}/test_results.log
-          echo "---" >> ${{ env.MEMORY_DIR }}/test_results.log
-
-  # ==========================================================================
-  # Learn from outcomes and update predictions
-  # ==========================================================================
-  learn-and-improve:
-    name: 🎓 Learn from Results
-    runs-on: ubuntu-latest
-    needs: [analyze-history, smart-testing]
-    if: always()
-    steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: 📥 Download Predictions
-        uses: actions/download-artifact@v4
-        with:
-          name: ai-predictions
-          path: predictions/
-
-      - name: 📊 Analyze Prediction Accuracy (Gemini - Free!)
-        id: accuracy
-        if: ${{ secrets.GEMINI_API_KEY != '' || secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
-        uses: google-github-actions/run-gemini-cli@v1
-        with:
-          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
-          prompt: |
-            You are learning from CI results to improve future predictions.
-
-            **Your Predictions Were:**
-            $(cat predictions/current_predictions.json)
-
-            **What Actually Happened:**
-            - Workflow outcome: ${{ needs.smart-testing.result }}
-            - Test strategy used: ${{ needs.smart-testing.outputs.test_strategy }}
-
-            **Task:**
-            1. Were your predictions accurate?
-            2. What patterns should we remember?
-            3. How can we improve next time?
-
-            Output JSON:
-            {
-              "accuracy_score": 1-10,
-              "learnings": ["..."],
-              "pattern_updates": [{"file_pattern": "...", "risk_level": "low|medium|high", "reason": "..."}],
-              "recommendations": ["..."]
-            }
-
-      - name: 💾 Update Memory
-        run: |
-          mkdir -p ${{ env.MEMORY_DIR }}
-
-          echo '${{ steps.accuracy.outputs.response }}' > ${{ env.MEMORY_DIR }}/latest_learning.json
-
-          # Append to learning history
-          if [ -f "${{ env.MEMORY_DIR }}/learning_history.jsonl" ]; then
-            cat ${{ env.MEMORY_DIR }}/latest_learning.json >> ${{ env.MEMORY_DIR }}/learning_history.jsonl
-          else
-            cat ${{ env.MEMORY_DIR }}/latest_learning.json > ${{ env.MEMORY_DIR }}/learning_history.jsonl
-          fi
-
-          echo "🧠 Updated AI memory with new learnings"
-
-      - name: 📤 Commit Updated Memory
-        run: |
-          git config user.name "Predictive CI Bot"
-          git config user.email "ci-bot@github-actions"
-
-          git add ${{ env.MEMORY_DIR }}/ || true
-          git diff --cached --quiet || git commit -m "🧠 Update AI memory with learning from run ${{ github.run_number }}" --no-gpg-sign
-
-          # Only push if we're on a branch we can write to
-          if [[ "${{ github.ref }}" == refs/heads/claude/* ]]; then
-            git push || echo "⚠️ Could not push memory updates"
-          else
-            echo "📝 Memory updates prepared but not pushed (not on claude/* branch)"
-          fi
-
-      - name: 📊 Post Learning Summary
-        uses: actions/github-script@v7
-        if: github.event_name == 'pull_request'
-        with:
-          script: |
-            const fs = require('fs');
-            const learning = JSON.parse(fs.readFileSync('${{ env.MEMORY_DIR }}/latest_learning.json', 'utf8'));
-
-            const summary = `## 🔮 Predictive CI Learning Summary
-
-            **Prediction Accuracy**: ${learning.accuracy_score}/10
-
-            ### 🎓 What I Learned:
-            ${learning.learnings.map(l => `- ${l}`).join('\n')}
-
-            ### 📈 Pattern Updates:
-            ${learning.pattern_updates?.map(p => `- \`${p.file_pattern}\`: ${p.risk_level} risk - ${p.reason}`).join('\n') || '_No pattern updates_'}
-
-            ### 💡 Recommendations:
-            ${learning.recommendations?.map(r => `- ${r}`).join('\n') || '_No recommendations_'}
-
-            ---
-            _This CI system learns from every run to predict future failures better._
-            `;
-
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number,
-              body: summary
-            });

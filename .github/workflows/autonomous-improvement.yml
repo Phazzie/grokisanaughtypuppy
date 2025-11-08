@@ -1,360 +1,96 @@
 name: 🤖 Autonomous Code Improvement
 
-# UNCONVENTIONAL: AI autonomously finds and implements improvements
-# Uses official GitHub Actions for AI providers
-# Creates PRs for TODOs, performance optimizations, and test generation
+# AI scans for TODOs and creates improvement PRs
+# Uses Claude Max for code generation
 
 on:
   schedule:
-    - cron: '0 2 * * 1'  # Every Monday at 2 AM
+    - cron: '0 2 * * 1'  # Weekly on Mondays at 2 AM
   workflow_dispatch:
-    inputs:
-      improvement_type:
-        description: 'Type of improvement'
-        required: false
-        default: 'all'
-        type: choice
-        options:
-          - all
-          - todos
-          - performance
-          - tests
-          - documentation
 
 permissions:
   contents: write
   pull-requests: write
   issues: write
 
-env:
-  MAX_CHANGES_PER_RUN: 3
-  MAX_COST_USD: 10
-
 jobs:
-  # ==========================================================================
-  # Scan for improvement opportunities
-  # ==========================================================================
-  scan-opportunities:
-    name: 🔍 Scan for Improvement Opportunities
+  scan-todos:
+    name: 🔍 Scan for TODO Items
     runs-on: ubuntu-latest
     outputs:
-      opportunities: ${{ steps.scan.outputs.response }}
+      has_todos: ${{ steps.scan.outputs.found }}
     steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+      - uses: actions/checkout@v4
 
-      - name: 🔍 Find TODOs and FIXMEs
-        run: |
-          echo "## TODOs Found:" > scan_results.txt
-          grep -r "TODO\|FIXME\|XXX\|HACK" --include="*.js" --include="*.ts" backend/ grok-chat/src/ 2>/dev/null >> scan_results.txt || echo "No TODOs found" >> scan_results.txt
-
-      - name: 📊 Analyze Test Coverage
-        run: |
-          echo "" >> scan_results.txt
-          echo "## Files Without Tests:" >> scan_results.txt
-
-          # Find JS/TS files that don't have corresponding test files
-          find backend -name "*.js" ! -name "*.spec.js" ! -name "*.test.js" 2>/dev/null | while read file; do
-            basename="${file%.*}"
-            if [ ! -f "${basename}.spec.js" ] && [ ! -f "${basename}.test.js" ]; then
-              echo "- $file (no test file)" >> scan_results.txt
-            fi
-          done
-
-      - name: 🎯 AI Analysis of Opportunities (Claude Max)
+      - name: Find TODOs
         id: scan
-        if: ${{ secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '' || secrets.GEMINI_API_KEY != '' }}
-        uses: anthropics/claude-code-action@v1
-        with:
-          # Supports BOTH Claude Max (OAuth) and API key
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          prompt: |
-            You are an autonomous code improvement system. Analyze this codebase for opportunities.
-
-            **Scan Results:**
-            $(cat scan_results.txt)
-
-            **Recent Commits (for context):**
-            $(git log --oneline -10)
-
-            **Task:** Identify the TOP 3 most valuable improvements:
-
-            Focus on:
-            1. **Implement TODOs** - Pick ones that add real value
-            2. **Add Missing Tests** - Critical untested code
-            3. **Performance Optimizations** - Low-hanging fruit
-            4. **Documentation Gaps** - Confusing code that needs docs
-
-            Output JSON:
-            {
-              "opportunities": [
-                {
-                  "type": "todo|test|performance|documentation",
-                  "priority": 1-10,
-                  "file": "path/to/file",
-                  "description": "...",
-                  "estimated_value": "high|medium|low",
-                  "implementation_complexity": "easy|medium|hard"
-                }
-              ],
-              "recommended_order": [0, 1, 2]
-            }
-
-            Only return opportunities where implementation_complexity is "easy" or "medium".
-            Prioritize high estimated_value items.
-
-      - name: 💾 Save Opportunities
         run: |
-          echo '${{ steps.scan.outputs.response }}' > opportunities.json
-          echo "📊 Found opportunities:"
-          cat opportunities.json
+          echo "## TODOs and FIXMEs Found:" > todos.md
+          grep -rn "TODO\|FIXME\|XXX\|HACK" --include="*.js" --include="*.ts" backend/ grok-chat/src/ 2>/dev/null >> todos.md || echo "No TODOs found" >> todos.md
 
-      - name: 📤 Upload Opportunities
+          if grep -q "TODO\|FIXME" todos.md; then
+            echo "found=true" >> $GITHUB_OUTPUT
+            echo "✅ Found TODOs to work on"
+          else
+            echo "found=false" >> $GITHUB_OUTPUT
+            echo "ℹ️ No TODOs found"
+          fi
+
+          cat todos.md
+
+      - name: Upload TODO List
+        if: steps.scan.outputs.found == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: improvement-opportunities
-          path: opportunities.json
+          name: todo-list
+          path: todos.md
 
-  # ==========================================================================
-  # Implement improvements autonomously
-  # ==========================================================================
-  implement-improvements:
-    name: 🛠️ Implement Improvements
+  create-improvement-issue:
+    name: 📝 Create Improvement Tracking Issue
     runs-on: ubuntu-latest
-    needs: scan-opportunities
-    strategy:
-      matrix:
-        improvement_index: [0, 1, 2]  # Process top 3 opportunities
-      max-parallel: 1  # Do them one at a time to avoid conflicts
+    needs: scan-todos
+    if: needs.scan-todos.outputs.has_todos == 'true' && (secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '' || secrets.GEMINI_API_KEY != '')
     steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+      - uses: actions/checkout@v4
 
-      - name: 📥 Download Opportunities
+      - name: Download TODO List
         uses: actions/download-artifact@v4
         with:
-          name: improvement-opportunities
+          name: todo-list
 
-      - name: 🎯 Get Specific Opportunity
-        id: opportunity
-        run: |
-          OPPORTUNITY=$(jq -r ".opportunities[${{ matrix.improvement_index }}] // null" opportunities.json)
-
-          if [ "$OPPORTUNITY" == "null" ]; then
-            echo "No opportunity at index ${{ matrix.improvement_index }}"
-            echo "exists=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          echo "exists=true" >> $GITHUB_OUTPUT
-          echo "$OPPORTUNITY" > current_opportunity.json
-
-          TYPE=$(echo "$OPPORTUNITY" | jq -r '.type')
-          FILE=$(echo "$OPPORTUNITY" | jq -r '.file')
-          DESC=$(echo "$OPPORTUNITY" | jq -r '.description')
-
-          echo "type=$TYPE" >> $GITHUB_OUTPUT
-          echo "file=$FILE" >> $GITHUB_OUTPUT
-          echo "description=$DESC" >> $GITHUB_OUTPUT
-
-          echo "🎯 Working on: $DESC"
-
-      - name: 📖 Read Current Code
-        if: steps.opportunity.outputs.exists == 'true'
-        run: |
-          FILE="${{ steps.opportunity.outputs.file }}"
-          if [ -f "$FILE" ]; then
-            cat "$FILE" > current_code.txt
-            echo "✅ Read $FILE"
-          else
-            echo "❌ File not found: $FILE"
-            echo "" > current_code.txt
-          fi
-
-      - name: 🤖 AI Implementation (Claude Max)
-        id: implement
-        if: steps.opportunity.outputs.exists == 'true' && (secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '' || secrets.GEMINI_API_KEY != '')
+      - name: Analyze with Claude
+        if: ${{ secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
         uses: anthropics/claude-code-action@v1
         with:
-          # Supports BOTH Claude Max (OAuth) and API key
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           prompt: |
-            You are implementing this improvement:
+            I found these TODOs in the codebase:
 
-            **Type**: ${{ steps.opportunity.outputs.type }}
-            **File**: ${{ steps.opportunity.outputs.file }}
-            **Task**: ${{ steps.opportunity.outputs.description }}
+            $(cat todos.md)
 
-            **Current Code:**
-            $(cat current_code.txt)
+            Please analyze and prioritize them. Create a markdown formatted report with:
+            1. High priority TODOs (security, bugs, critical features)
+            2. Medium priority (performance, refactoring)
+            3. Low priority (nice-to-haves, documentation)
 
-            **Instructions:**
-            1. Implement the improvement described
-            2. Maintain existing code style and conventions
-            3. Add appropriate comments
-            4. Ensure backward compatibility
-            5. Do NOT add secrets or API keys
+            For each TODO, suggest:
+            - Why it's important
+            - Estimated effort (easy/medium/hard)
+            - Any dependencies
 
-            Output the COMPLETE new file content.
-            No explanations, just the code.
-
-      - name: 🔍 Security Scan of AI-Generated Code
-        if: steps.opportunity.outputs.exists == 'true'
-        run: |
-          # Check for common secret patterns
-          CONTENT='${{ steps.implement.outputs.response }}'
-
-          if echo "$CONTENT" | grep -iE "(api[_-]?key|secret|password|token).*=.*['\"][a-zA-Z0-9]{20,}" > secrets_found.txt; then
-            echo "⚠️ SECURITY WARNING: Possible secrets detected in AI-generated code!"
-            cat secrets_found.txt
-            echo "❌ Rejecting this change for security reasons"
-            exit 1
-          fi
-
-          echo "✅ Security scan passed"
-
-      - name: ✍️ Write Improved Code
-        if: steps.opportunity.outputs.exists == 'true'
-        run: |
-          FILE="${{ steps.opportunity.outputs.file }}"
-          echo '${{ steps.implement.outputs.response }}' > "$FILE"
-          echo "✅ Updated $FILE"
-
-      - name: 📦 Setup Node.js for Testing
-        if: steps.opportunity.outputs.exists == 'true'
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-
-      - name: 🧪 Verify Changes Don't Break Anything
-        if: steps.opportunity.outputs.exists == 'true'
-        run: |
-          # Try to parse/validate the changes
-          FILE="${{ steps.opportunity.outputs.file }}"
-
-          if [[ "$FILE" == *.js ]]; then
-            node -c "$FILE" && echo "✅ JavaScript syntax valid"
-          elif [[ "$FILE" == *.ts ]]; then
-            echo "✅ TypeScript file (would need tsc to validate)"
-          fi
-
-      - name: 🌿 Create Branch and Commit
-        if: steps.opportunity.outputs.exists == 'true'
-        run: |
-          BRANCH_NAME="autonomous-improvement-${{ matrix.improvement_index }}-${{ github.run_number }}"
-
-          git config user.name "Autonomous Improvement Bot"
-          git config user.email "autonomous-bot@github-actions"
-
-          git checkout -b "$BRANCH_NAME"
-
-          git add "${{ steps.opportunity.outputs.file }}"
-          git commit -m "🤖 Autonomous improvement: ${{ steps.opportunity.outputs.description }}" --no-gpg-sign
-
-          echo "branch_name=$BRANCH_NAME" >> $GITHUB_ENV
-
-      - name: 📤 Push Branch
-        if: steps.opportunity.outputs.exists == 'true'
-        run: |
-          git push -u origin "${{ env.branch_name }}" || echo "⚠️ Could not push branch"
-
-      - name: 📝 Create Pull Request
-        if: steps.opportunity.outputs.exists == 'true'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const opportunity = require('./current_opportunity.json');
-
-            const pr = await github.rest.pulls.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: `🤖 Autonomous: ${opportunity.description}`,
-              head: '${{ env.branch_name }}',
-              base: 'main',
-              body: `## 🤖 Autonomous Code Improvement
-
-            **Type**: ${opportunity.type}
-            **Priority**: ${opportunity.priority}/10
-            **Estimated Value**: ${opportunity.estimated_value}
-            **Complexity**: ${opportunity.implementation_complexity}
-
-            ### What Changed
-            ${opportunity.description}
-
-            ### File Modified
-            - \`${opportunity.file}\`
-
-            ### Review Notes
-            ⚠️ This PR was created autonomously by AI. Please review carefully before merging.
-
-            - [ ] Code changes look correct
-            - [ ] No security issues introduced
-            - [ ] Tests pass
-            - [ ] Documentation updated if needed
-
-            ---
-            _Generated by Autonomous Improvement Bot • Run #${{ github.run_number }}_
-            `
-            });
-
-            console.log(`Created PR #${pr.data.number}`);
-
-  # ==========================================================================
-  # Summary Report
-  # ==========================================================================
-  report-summary:
-    name: 📊 Generate Summary Report
-    runs-on: ubuntu-latest
-    needs: [scan-opportunities, implement-improvements]
-    if: always()
-    steps:
-      - name: 📥 Download Opportunities
-        uses: actions/download-artifact@v4
-        with:
-          name: improvement-opportunities
-
-      - name: 📊 Generate Summary
-        run: |
-          cat > summary.md << 'SUMMARY'
-          # 🤖 Autonomous Improvement Run Summary
-
-          **Run**: #${{ github.run_number }}
-          **Date**: $(date -Iseconds)
-
-          ## Opportunities Found
-          $(jq -r '.opportunities[] | "- **" + .type + "**: " + .description + " (priority: " + (.priority|tostring) + "/10)"' opportunities.json)
-
-          ## Actions Taken
-          Check the pull requests created by this run for details.
-
-          ## Next Steps
-          - Review and merge the PRs created by the autonomous bot
-          - Monitor for any issues introduced by the changes
-          - The bot will continue to find and implement improvements weekly
-
-          ---
-          _Autonomous Improvement Bot runs every Monday at 2 AM_
-          SUMMARY
-
-          cat summary.md
-
-      - name: 💬 Post Summary as Issue
+      - name: Create GitHub Issue
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
-            const summary = fs.readFileSync('summary.md', 'utf8');
+            const todos = fs.readFileSync('todos.md', 'utf8');
 
             await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: `🤖 Autonomous Improvement Summary - Run #${{ github.run_number }}`,
-              body: summary,
-              labels: ['autonomous', 'bot', 'improvement']
+              title: `🤖 Autonomous Improvement Scan - ${new Date().toISOString().split('T')[0]}`,
+              body: `## TODOs Found in Codebase\n\n${todos}\n\n---\n\n_Generated by Autonomous Improvement Bot • Run #${context.runNumber}_\n\n**Next Steps:**\n- Review prioritized TODO list above\n- AI can implement high-priority items\n- Comment on this issue to assign specific TODOs`,
+              labels: ['autonomous', 'improvement', 'todo-scan']
             });

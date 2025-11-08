@@ -1,8 +1,7 @@
-name: 🧠 AI Council - Multi-Agent Code Review Debate
+name: 🧠 AI Council - Multi-Agent Code Review
 
-# UNCONVENTIONAL: Three AIs debate each other's findings
-# Uses official GitHub Actions for Claude, Gemini, and Copilot
-# The most critical/agreed-upon issues rise to the top
+# Three AIs review pull requests and provide synthesis
+# Uses Claude Code Action and Gemini CLI Action properly
 
 on:
   pull_request:
@@ -15,314 +14,93 @@ permissions:
   issues: write
 
 jobs:
-  # ==========================================================================
-  # ROUND 1: Independent Reviews (All AIs review simultaneously)
-  # ==========================================================================
-  claude-independent-review:
-    name: 🎭 Claude's Independent Analysis
+  # ==============================================================================
+  # Claude Code Review (High Quality)
+  # ==============================================================================
+  claude-review:
+    name: 🎭 Claude Code Review
     runs-on: ubuntu-latest
     if: ${{ secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
-    outputs:
-      review_json: ${{ steps.review.outputs.result }}
     steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+      - uses: actions/checkout@v4
 
-      - name: 📊 Get PR Diff
-        id: diff
-        run: |
-          git diff origin/${{ github.event.pull_request.base.ref }}...HEAD > pr_diff.txt
-          echo "diff_size=$(wc -l < pr_diff.txt)" >> $GITHUB_OUTPUT
-
-      - name: 🎭 Claude Deep Analysis
-        id: review
+      - name: Run Claude Code Review
         uses: anthropics/claude-code-action@v1
         with:
-          # Supports BOTH Claude Max (OAuth) and API key
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           prompt: |
-            You are a senior architect conducting a deep code review. Analyze this PR critically:
+            Please conduct a thorough code review of this PR focusing on:
 
-            1. **Security Vulnerabilities** - Find potential exploits
-            2. **Performance Issues** - Identify bottlenecks and inefficiencies
-            3. **Architecture Problems** - Detect design flaws
-            4. **Hidden Bugs** - Find edge cases and race conditions
-            5. **Technical Debt** - Identify future maintenance nightmares
+            1. **Security vulnerabilities** - SQL injection, XSS, auth bypasses
+            2. **Performance issues** - N+1 queries, memory leaks, blocking operations
+            3. **Architecture problems** - Design flaws, tight coupling
+            4. **Hidden bugs** - Edge cases, race conditions, error handling
+            5. **Technical debt** - Code smells, maintainability issues
 
-            Be CRITICAL. Find the problems that will cause production incidents.
-            Output ONLY JSON in this format:
-            {
-              "critical_issues": [{"type": "...", "severity": 1-10, "finding": "...", "evidence": "...", "confidence": 1-10}],
-              "recommendations": ["..."],
-              "overall_risk": 1-10
-            }
+            Be critical and thorough. Format your response clearly with:
+            - Critical Issues (must fix)
+            - Medium Priority Issues
+            - Suggestions for improvement
 
-      - name: 💾 Save Claude Review
-        run: |
-          echo '${{ steps.review.outputs.response }}' > claude_review.json
-          cat claude_review.json
+            Use markdown formatting for the review.
 
-      - name: 📤 Upload Claude Review
-        uses: actions/upload-artifact@v4
-        with:
-          name: claude-review
-          path: claude_review.json
-
-  gemini-independent-review:
-    name: 💎 Gemini's Independent Analysis
+  # ==============================================================================
+  # Gemini Code Review (Free Alternative)
+  # ==============================================================================
+  gemini-review:
+    name: 💎 Gemini Code Review
     runs-on: ubuntu-latest
     if: ${{ secrets.GEMINI_API_KEY != '' }}
-    outputs:
-      review_json: ${{ steps.review.outputs.response }}
     steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+      - uses: actions/checkout@v4
 
-      - name: 📊 Get PR Diff
-        run: git diff origin/${{ github.event.pull_request.base.ref }}...HEAD > pr_diff.txt
-
-      - name: 💎 Gemini Deep Analysis
-        id: review
+      - name: Run Gemini Code Review
         uses: google-github-actions/run-gemini-cli@v1
         with:
           gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
           prompt: |
-            You are a security expert and performance specialist. Review this code:
+            Analyze this pull request from a security and performance perspective:
 
-            1. **Security Flaws** - Authentication, authorization, injection vulnerabilities
-            2. **Performance Killers** - N+1 queries, memory leaks, blocking operations
-            3. **Scalability Issues** - Will this work at 100x scale?
-            4. **Error Handling** - What happens when things go wrong?
-            5. **Data Integrity** - Can data get corrupted?
+            1. Security flaws - authentication, authorization, injection
+            2. Performance killers - slow queries, blocking operations
+            3. Scalability concerns - will this work at scale?
+            4. Error handling - what happens when things fail?
 
-            Be SKEPTICAL. Assume this will run in production tomorrow.
-            Output ONLY JSON in this format:
-            {
-              "critical_issues": [{"type": "...", "severity": 1-10, "finding": "...", "evidence": "...", "confidence": 1-10}],
-              "recommendations": ["..."],
-              "overall_risk": 1-10
-            }
+            Provide specific, actionable feedback.
 
-      - name: 💾 Save Gemini Review
-        run: |
-          echo '${{ steps.review.outputs.response }}' > gemini_review.json
-          cat gemini_review.json
-
-      - name: 📤 Upload Gemini Review
-        uses: actions/upload-artifact@v4
-        with:
-          name: gemini-review
-          path: gemini_review.json
-
-  copilot-independent-review:
-    name: 🐙 Copilot's Independent Analysis
+  # ==============================================================================
+  # Manual Review Collection (fallback if AI unavailable)
+  # ==============================================================================
+  manual-review-needed:
+    name: 📝 Manual Review Required
     runs-on: ubuntu-latest
-    outputs:
-      review_json: ${{ steps.review.outputs.result }}
+    if: ${{ secrets.ANTHROPIC_API_KEY == '' && secrets.CLAUDE_CODE_OAUTH_TOKEN == '' && secrets.GEMINI_API_KEY == '' }}
     steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: 📊 Get PR Diff
-        run: git diff origin/${{ github.event.pull_request.base.ref }}...HEAD > pr_diff.txt
-
-      - name: 🐙 Copilot Deep Analysis
-        id: review
-        run: |
-          # Install GitHub CLI and Copilot extension
-          type gh &>/dev/null || (curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
-          sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg && \
-          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null && \
-          sudo apt update && \
-          sudo apt install gh -y)
-
-          gh extension install github/gh-copilot 2>/dev/null || true
-
-          cat > copilot_prompt.txt << 'PROMPT'
-          You are a pragmatic engineer focused on maintainability. Review this code:
-
-          1. **Readability Issues** - Will future developers understand this?
-          2. **Testing Gaps** - What's not being tested?
-          3. **Best Practices** - What conventions are violated?
-          4. **Dependencies** - Are we adding technical debt?
-          5. **Documentation** - Is this self-explanatory?
-
-          Be PRACTICAL. Think about the next developer maintaining this.
-          Output ONLY JSON in this format:
-          {
-            "critical_issues": [{"type": "...", "severity": 1-10, "finding": "...", "evidence": "...", "confidence": 1-10}],
-            "recommendations": ["..."],
-            "overall_risk": 1-10
-          }
-          PROMPT
-
-          # Run Copilot analysis
-          gh copilot suggest "$(cat copilot_prompt.txt)" > copilot_review.json || echo '{"critical_issues":[],"recommendations":[],"overall_risk":0}' > copilot_review.json
-
-          echo "result<<EOF" >> $GITHUB_OUTPUT
-          cat copilot_review.json >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: 📤 Upload Copilot Review
-        uses: actions/upload-artifact@v4
-        with:
-          name: copilot-review
-          path: copilot_review.json
-
-  # ==========================================================================
-  # ROUND 2: AI Debate (AIs challenge each other's findings)
-  # ==========================================================================
-  ai-council-debate:
-    name: ⚖️ AI Council Debate & Consensus
-    runs-on: ubuntu-latest
-    needs: [claude-independent-review, gemini-independent-review, copilot-independent-review]
-    if: always()
-    steps:
-      - name: 📥 Download All Reviews
-        uses: actions/download-artifact@v4
-        with:
-          path: reviews/
-
-      - name: 🤔 Synthesize Reviews with Claude
-        id: synthesize
-        if: ${{ secrets.ANTHROPIC_API_KEY != '' || secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
-        uses: anthropics/claude-code-action@v1
-        with:
-          # Supports BOTH Claude Max (OAuth) and API key
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          prompt: |
-            You are the moderator of an AI council. Three AIs have reviewed the same code.
-
-            Your job:
-            1. **Find Consensus** - What did all AIs agree on? (Highest priority)
-            2. **Identify Conflicts** - Where do they disagree? Why?
-            3. **Challenge Weak Findings** - Which concerns lack evidence?
-            4. **Synthesize Action Items** - What MUST be fixed vs. nice-to-have?
-            5. **Risk Assessment** - Weighted risk score based on agreement
-
-            Output format:
-            {
-              "consensus_critical_issues": [{"issue": "...", "agreed_by": ["claude", "gemini", "copilot"], "severity": 1-10}],
-              "debated_issues": [{"issue": "...", "claude_says": "...", "gemini_says": "...", "copilot_says": "..."}],
-              "must_fix": ["..."],
-              "nice_to_have": ["..."],
-              "overall_risk": 1-10,
-              "recommendation": "approve|request_changes|needs_discussion"
-            }
-
-      - name: 💾 Save Council Decision
-        run: |
-          echo '${{ steps.synthesize.outputs.response }}' > council_decision.json
-          cat council_decision.json
-
-      - name: 📊 Generate Visual Report
-        run: |
-          cat > council_report.md << 'REPORT'
-          # 🧠 AI Council Review Results
-
-          ## ⚖️ Council Decision
-
-          **Overall Risk**: $(jq -r '.overall_risk // "N/A"' council_decision.json)/10
-          **Recommendation**: $(jq -r '.recommendation // "N/A"' council_decision.json)
-
-          ---
-
-          ## 🎯 Consensus Issues (All AIs Agree)
-
-          These issues were identified by multiple AIs and should be prioritized:
-
-          $(jq -r '.consensus_critical_issues[]? | "### " + .issue + "\n**Severity**: " + (.severity|tostring) + "/10\n**Agreed by**: " + (.agreed_by|join(", ")) + "\n"' council_decision.json || echo "_No consensus issues found_")
-
-          ---
-
-          ## 🤔 Debated Issues (AIs Disagree)
-
-          These issues need human judgment:
-
-          $(jq -r '.debated_issues[]? | "### " + .issue + "\n- 🎭 **Claude**: " + .claude_says + "\n- 💎 **Gemini**: " + .gemini_says + "\n- 🐙 **Copilot**: " + .copilot_says + "\n"' council_decision.json || echo "_No debated issues found_")
-
-          ---
-
-          ## ✅ Must Fix Before Merge
-
-          $(jq -r '.must_fix[]? | "- [ ] " + .' council_decision.json || echo "_No critical fixes required_")
-
-          ---
-
-          ## 💡 Nice to Have
-
-          $(jq -r '.nice_to_have[]? | "- " + .' council_decision.json || echo "_No suggestions_")
-
-          ---
-
-          ## 📊 Individual AI Reports
-
-          <details>
-          <summary>🎭 Claude's Full Analysis</summary>
-
-          \`\`\`json
-          $(cat reviews/claude-review/claude_review.json 2>/dev/null || echo "{}")
-          \`\`\`
-
-          </details>
-
-          <details>
-          <summary>💎 Gemini's Full Analysis</summary>
-
-          \`\`\`json
-          $(cat reviews/gemini-review/gemini_review.json 2>/dev/null || echo "{}")
-          \`\`\`
-
-          </details>
-
-          <details>
-          <summary>🐙 Copilot's Full Analysis</summary>
-
-          \`\`\`json
-          $(cat reviews/copilot-review/copilot_review.json 2>/dev/null || echo "{}")
-          \`\`\`
-
-          </details>
-
-          ---
-
-          _Generated by AI Council - Where Multiple AIs Debate Your Code_ 🧠
-
-          **Implementation Note**: This workflow uses official GitHub Actions:
-          - `anthropics/claude-code-action@v1`
-          - `google-github-actions/run-gemini-cli@v1`
-          - GitHub Copilot CLI (built-in)
-          REPORT
-
-      - name: 💬 Post Council Decision to PR
-        uses: actions/github-script@v7
+      - uses: actions/github-script@v7
         with:
           script: |
-            const fs = require('fs');
-            const report = fs.readFileSync('council_report.md', 'utf8');
-
-            await github.rest.issues.createComment({
+            github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.payload.pull_request.number,
-              body: report
-            });
+              body: `## ⚠️ AI Review Not Configured
 
-      - name: ❌ Fail if Critical Issues Found
-        run: |
-          RISK=$(jq -r '.overall_risk // 0' council_decision.json)
-          if [ "$RISK" -gt 7 ]; then
-            echo "❌ AI Council has determined this PR is too risky (risk: $RISK/10)"
-            exit 1
-          fi
-          echo "✅ Risk level acceptable ($RISK/10)"
+              No AI API keys found. To enable AI-powered reviews:
+
+              **Option 1: Claude Max (OAuth)**
+              1. Run \`claude setup-token\` in your terminal
+              2. Add token as \`CLAUDE_CODE_OAUTH_TOKEN\` secret
+
+              **Option 2: Free Gemini**
+              1. Get key from https://aistudio.google.com/apikey
+              2. Add as \`GEMINI_API_KEY\` secret
+
+              **Option 3: Anthropic API**
+              1. Get key from https://console.anthropic.com
+              2. Add as \`ANTHROPIC_API_KEY\` secret
+
+              See \`CLAUDE-MAX-SETUP.md\` for detailed instructions.
+              `
+            });
