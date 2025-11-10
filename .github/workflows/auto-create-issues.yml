@@ -1,0 +1,129 @@
+name: Auto-Create Issues from Analysis
+
+# This workflow automatically creates GitHub issues from analysis reports
+# Triggered manually or when analysis files are pushed
+
+on:
+  # Manual trigger
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Run in dry-run mode (preview only)'
+        required: false
+        type: boolean
+        default: true
+
+  # Automatic trigger when analysis files are pushed
+  push:
+    branches:
+      - main
+      - claude/**
+    paths:
+      - 'ISSUES_TO_CREATE.md'
+      - 'create-github-issues.sh'
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  create-issues:
+    name: Create Issues from Analysis
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check if issues file exists
+        id: check_file
+        run: |
+          if [ -f "ISSUES_TO_CREATE.md" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Setup GitHub CLI
+        if: steps.check_file.outputs.exists == 'true'
+        run: |
+          type gh >/dev/null 2>&1 || (
+            curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+            sudo apt update
+            sudo apt install gh -y
+          )
+
+      - name: Authenticate GitHub CLI
+        if: steps.check_file.outputs.exists == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
+
+      - name: Preview issues to be created
+        if: steps.check_file.outputs.exists == 'true' && (github.event.inputs.dry_run == 'true' || github.event_name == 'push')
+        run: |
+          echo "::notice::Would create the following issues from ISSUES_TO_CREATE.md"
+          # Count issues
+          ISSUE_COUNT=$(grep -c "^### Issue" ISSUES_TO_CREATE.md || echo "0")
+          echo "::notice::Total issues to create: $ISSUE_COUNT"
+
+          # Extract issue titles
+          echo "Issues to create:"
+          grep "^### Issue" ISSUES_TO_CREATE.md | sed 's/### //' || echo "No issues found"
+
+      - name: Create GitHub Issues (Production Mode)
+        if: |
+          steps.check_file.outputs.exists == 'true' &&
+          github.event.inputs.dry_run == 'false' &&
+          github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          chmod +x create-github-issues.sh
+          ./create-github-issues.sh
+
+      - name: Comment on PR if triggered by push
+        if: |
+          steps.check_file.outputs.exists == 'true' &&
+          github.event_name == 'push' &&
+          github.event.pull_request != null
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ISSUE_COUNT=$(grep -c "^### Issue" ISSUES_TO_CREATE.md || echo "0")
+          gh pr comment ${{ github.event.pull_request.number }} --body "📋 **Issue Creation Available**
+
+This PR includes an analysis with $ISSUE_COUNT issues ready to be created.
+
+To create these issues, go to Actions → Auto-Create Issues from Analysis → Run workflow and set dry_run to false.
+
+Preview the issues in: [ISSUES_TO_CREATE.md](../blob/${{ github.sha }}/ISSUES_TO_CREATE.md)"
+
+      - name: Create workflow summary
+        if: steps.check_file.outputs.exists == 'true'
+        run: |
+          ISSUE_COUNT=$(grep -c "^### Issue" ISSUES_TO_CREATE.md || echo "0")
+          CRITICAL=$(grep -c "🔴 Critical" ISSUES_TO_CREATE.md || echo "0")
+          HIGH=$(grep -c "🟠 High" ISSUES_TO_CREATE.md || echo "0")
+          MEDIUM=$(grep -c "🟡 Medium" ISSUES_TO_CREATE.md || echo "0")
+          LOW=$(grep -c "🟢 Low" ISSUES_TO_CREATE.md || echo "0")
+
+          cat >> $GITHUB_STEP_SUMMARY <<EOF
+          ## 📊 Issue Creation Summary
+
+          **Total Issues:** $ISSUE_COUNT
+
+          ### By Priority
+          - 🔴 Critical: $CRITICAL
+          - 🟠 High: $HIGH
+          - 🟡 Medium: $MEDIUM
+          - 🟢 Low: $LOW
+
+          ### Mode
+          $(if [ "${{ github.event.inputs.dry_run }}" = "false" ]; then echo "✅ Issues have been created"; else echo "👀 Preview mode - no issues created"; fi)
+
+          ### Next Steps
+          $(if [ "${{ github.event.inputs.dry_run }}" != "false" ]; then echo "To create issues, run this workflow with dry_run=false"; else echo "View created issues: [Issues](../../issues)"; fi)
+          EOF

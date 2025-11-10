@@ -1,0 +1,183 @@
+name: Convert Review Comments to Issues
+
+# This workflow automatically converts PR review comments into GitHub issues
+# when a comment contains the keyword [issue] or [create-issue]
+
+on:
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+  issue_comment:
+    types: [created]
+
+permissions:
+  issues: write
+  pull-requests: write
+  contents: read
+
+jobs:
+  create-issue-from-comment:
+    name: Create Issue from Comment
+    runs-on: ubuntu-latest
+    if: |
+      (github.event_name == 'pull_request_review_comment' ||
+       github.event_name == 'pull_request_review' ||
+       (github.event_name == 'issue_comment' && github.event.issue.pull_request)) &&
+      (contains(github.event.comment.body, '[issue]') ||
+       contains(github.event.comment.body, '[create-issue]') ||
+       contains(github.event.review.body, '[issue]') ||
+       contains(github.event.review.body, '[create-issue]'))
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup GitHub CLI
+        run: |
+          type gh >/dev/null 2>&1 || (
+            curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+            sudo apt update
+            sudo apt install gh -y
+          )
+
+      - name: Authenticate GitHub CLI
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
+
+      - name: Extract comment details
+        id: extract
+        env:
+          COMMENT_BODY: ${{ github.event.comment.body || github.event.review.body }}
+          COMMENT_USER: ${{ github.event.comment.user.login || github.event.review.user.login }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          COMMENT_URL: ${{ github.event.comment.html_url || github.event.review.html_url }}
+        run: |
+          # Extract title (first line after [issue] or [create-issue])
+          TITLE=$(echo "$COMMENT_BODY" | grep -A 1 '\[issue\]\|\[create-issue\]' | tail -1 | sed 's/^[#* ]*//' | head -c 100)
+
+          # If no explicit title, use first line of comment
+          if [ -z "$TITLE" ]; then
+            TITLE=$(echo "$COMMENT_BODY" | head -1 | sed 's/^[#* ]*//' | head -c 100)
+          fi
+
+          # Extract labels if specified (format: [labels: bug, enhancement])
+          LABELS=$(echo "$COMMENT_BODY" | grep -oP '\[labels?:\s*\K[^\]]+' || echo "")
+
+          # Extract priority if specified (format: [priority: high])
+          PRIORITY=$(echo "$COMMENT_BODY" | grep -oP '\[priority:\s*\K[^\]]+' || echo "")
+
+          # Add priority as label if specified
+          if [ -n "$PRIORITY" ]; then
+            if [ -n "$LABELS" ]; then
+              LABELS="$LABELS,priority-$PRIORITY"
+            else
+              LABELS="priority-$PRIORITY"
+            fi
+          fi
+
+          # Default labels if none specified
+          if [ -z "$LABELS" ]; then
+            LABELS="from-review"
+          else
+            LABELS="from-review,$LABELS"
+          fi
+
+          # Save to output
+          echo "title=$TITLE" >> $GITHUB_OUTPUT
+          echo "labels=$LABELS" >> $GITHUB_OUTPUT
+          echo "comment_user=$COMMENT_USER" >> $GITHUB_OUTPUT
+          echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
+          echo "comment_url=$COMMENT_URL" >> $GITHUB_OUTPUT
+
+          # Save full body for issue description
+          cat > /tmp/issue_body.md <<EOF
+          ## From PR Review Comment
+
+          **Raised by:** @$COMMENT_USER
+          **In PR:** #$PR_NUMBER
+          **Comment:** $COMMENT_URL
+
+          ---
+
+          $COMMENT_BODY
+
+          ---
+
+          *This issue was automatically created from a PR review comment.*
+          EOF
+
+      - name: Create GitHub Issue
+        id: create_issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ISSUE_URL=$(gh issue create \
+            --title "${{ steps.extract.outputs.title }}" \
+            --body-file /tmp/issue_body.md \
+            --label "${{ steps.extract.outputs.labels }}")
+
+          echo "issue_url=$ISSUE_URL" >> $GITHUB_OUTPUT
+          echo "::notice::Created issue: $ISSUE_URL"
+
+      - name: Comment on PR with issue link
+        if: steps.create_issue.outputs.issue_url != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr comment ${{ steps.extract.outputs.pr_number }} --body "✅ **Issue Created**
+
+          Created issue from review comment: ${{ steps.create_issue.outputs.issue_url }}
+
+          The issue has been linked to this PR and labeled with: \`${{ steps.extract.outputs.labels }}\`"
+
+      - name: React to original comment
+        if: steps.create_issue.outputs.issue_url != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMENT_URL: ${{ steps.extract.outputs.comment_url }}
+        run: |
+          # Extract comment ID from URL
+          COMMENT_ID=$(echo "$COMMENT_URL" | grep -oP 'comments/\K\d+' || echo "")
+
+          if [ -n "$COMMENT_ID" ]; then
+            # Add rocket reaction to indicate issue was created
+            gh api \
+              --method POST \
+              -H "Accept: application/vnd.github+json" \
+              "/repos/${{ github.repository }}/issues/comments/$COMMENT_ID/reactions" \
+              -f content='rocket' || true
+          fi
+
+      - name: Create workflow summary
+        if: steps.create_issue.outputs.issue_url != ''
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY <<EOF
+          ## 🎯 Issue Created from Review Comment
+
+          **Title:** ${{ steps.extract.outputs.title }}
+          **Issue:** ${{ steps.create_issue.outputs.issue_url }}
+          **Labels:** \`${{ steps.extract.outputs.labels }}\`
+          **From:** PR #${{ steps.extract.outputs.pr_number }} by @${{ steps.extract.outputs.comment_user }}
+
+          ### Usage
+          To create an issue from a review comment, include \`[issue]\` or \`[create-issue]\` in your comment.
+
+          **Optional directives:**
+          - \`[labels: bug, enhancement]\` - Add custom labels
+          - \`[priority: high]\` - Set priority (adds priority-high label)
+
+          **Example:**
+          \`\`\`
+          [issue]
+          Fix memory leak in event listeners
+
+          [labels: bug, memory-leak]
+          [priority: high]
+
+          The event listeners in app.ts are not being cleaned up properly.
+          \`\`\`
+          EOF
