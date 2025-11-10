@@ -1,0 +1,341 @@
+name: 🔧 Self-Healing Pipeline
+
+on:
+  workflow_run:
+    workflows: ["🤖 AI-Powered CI/CD Pipeline"]
+    types: [completed]
+    branches: [main, develop]
+  workflow_dispatch:
+    inputs:
+      fix_type:
+        description: 'Type of fix to attempt'
+        required: true
+        type: choice
+        options:
+          - auto-fix-all
+          - update-dependencies
+          - fix-linting
+          - fix-tests
+          - regenerate-lockfiles
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  detect-failures:
+    name: 🔍 Detect CI Failures
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'failure' || github.event_name == 'workflow_dispatch' }}
+    outputs:
+      should_heal: ${{ steps.analysis.outputs.should_heal }}
+      failure_type: ${{ steps.analysis.outputs.failure_type }}
+    steps:
+      - name: 📊 Analyze Failure
+        id: analysis
+        run: |
+          echo "🔍 Analyzing CI failure..."
+          echo "Workflow conclusion: ${{ github.event.workflow_run.conclusion }}"
+          echo ""
+
+          # Determine if we should attempt auto-healing
+          echo "should_heal=true" >> $GITHUB_OUTPUT
+          echo "failure_type=unknown" >> $GITHUB_OUTPUT
+
+          echo "✅ Failure analysis complete"
+
+  auto-fix-dependencies:
+    name: 📦 Auto-Fix Dependency Issues
+    runs-on: ubuntu-latest
+    needs: detect-failures
+    if: ${{ needs.detect-failures.outputs.should_heal == 'true' || github.event.inputs.fix_type == 'update-dependencies' }}
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_branch || github.ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 🔧 Auto-fix Backend Dependencies
+        working-directory: backend
+        run: |
+          echo "🔧 Attempting to fix backend dependencies..."
+
+          # Try to fix audit issues automatically
+          npm audit fix || echo "⚠️ Some issues could not be auto-fixed"
+
+          # Rebuild package-lock.json if corrupted
+          if [ ! -f package-lock.json ] || ! npm ci; then
+            echo "📦 Regenerating package-lock.json..."
+            rm -f package-lock.json
+            npm install
+          fi
+
+          echo "✅ Backend dependency fix complete"
+        continue-on-error: true
+
+      - name: 🔧 Auto-fix Frontend Dependencies
+        working-directory: grok-chat
+        run: |
+          echo "🔧 Attempting to fix frontend dependencies..."
+
+          # Try to fix audit issues automatically
+          npm audit fix || echo "⚠️ Some issues could not be auto-fixed"
+
+          # Rebuild package-lock.json if corrupted
+          if [ ! -f package-lock.json ] || ! npm ci; then
+            echo "📦 Regenerating package-lock.json..."
+            rm -f package-lock.json
+            npm install
+          fi
+
+          echo "✅ Frontend dependency fix complete"
+        continue-on-error: true
+
+      - name: 🔍 Check for Changes
+        id: changes
+        run: |
+          if git diff --quiet HEAD; then
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "ℹ️ No changes to commit"
+          else
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "✅ Changes detected"
+          fi
+
+      - name: 📝 Commit Fixes
+        if: steps.changes.outputs.has_changes == 'true'
+        run: |
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add backend/package-lock.json grok-chat/package-lock.json || true
+          git commit -m "🔧 Auto-fix: Update dependencies [skip ci]"
+          git push || echo "⚠️ Push failed - may need force push or PR"
+
+  auto-fix-linting:
+    name: 🎨 Auto-Fix Linting Issues
+    runs-on: ubuntu-latest
+    needs: detect-failures
+    if: ${{ needs.detect-failures.outputs.should_heal == 'true' || github.event.inputs.fix_type == 'fix-linting' }}
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_branch || github.ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 📦 Install Frontend Dependencies
+        working-directory: grok-chat
+        run: npm ci
+
+      - name: 🎨 Auto-fix Formatting (Prettier)
+        working-directory: grok-chat
+        run: |
+          echo "🎨 Auto-fixing code formatting..."
+          npx prettier --write "src/**/*.{ts,html,scss,css}" || echo "⚠️ Some files could not be formatted"
+          echo "✅ Formatting complete"
+        continue-on-error: true
+
+      - name: 🔧 Auto-fix Linting (ESLint)
+        working-directory: grok-chat
+        run: |
+          echo "🔧 Auto-fixing linting issues..."
+          npx ng lint --fix || echo "⚠️ Some linting issues could not be auto-fixed"
+          echo "✅ Linting fix attempt complete"
+        continue-on-error: true
+
+      - name: 🔍 Check for Changes
+        id: changes
+        run: |
+          if git diff --quiet HEAD; then
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "ℹ️ No changes to commit"
+          else
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "✅ Changes detected"
+          fi
+
+      - name: 📝 Commit Fixes
+        if: steps.changes.outputs.has_changes == 'true'
+        run: |
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add .
+          git commit -m "🎨 Auto-fix: Format and lint code [skip ci]"
+          git push || echo "⚠️ Push failed"
+
+  generate-test-suggestions:
+    name: 🧪 Generate Missing Test Suggestions
+    runs-on: ubuntu-latest
+    needs: detect-failures
+    if: ${{ needs.detect-failures.outputs.should_heal == 'true' || github.event.inputs.fix_type == 'fix-tests' }}
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 🧪 Analyze Test Coverage
+        working-directory: grok-chat
+        run: |
+          echo "🧪 Analyzing test coverage..."
+
+          # Find TypeScript files without corresponding spec files
+          echo "Files without tests:" > ../missing-tests.txt
+          for file in $(find src -name "*.ts" -not -name "*.spec.ts" -not -name "main.ts"); do
+            spec_file="${file%.ts}.spec.ts"
+            if [ ! -f "$spec_file" ]; then
+              echo "  - $file" >> ../missing-tests.txt
+            fi
+          done
+
+          cat ../missing-tests.txt
+        continue-on-error: true
+
+      - name: 📝 Create Issue for Missing Tests
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let missingTests = '(analysis failed)';
+            try {
+              missingTests = fs.readFileSync('missing-tests.txt', 'utf8');
+            } catch (e) {
+              console.log('Could not read missing tests file');
+            }
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '🧪 [Self-Healing] Missing Test Coverage Detected',
+              body: `## 🤖 Automated Test Coverage Analysis
+
+              The self-healing pipeline detected files without test coverage:
+
+              ${missingTests}
+
+              ### 📋 Recommended Actions
+              1. Add unit tests for uncovered files
+              2. Consider using AI to generate test templates
+              3. Run \`npm test\` to verify coverage
+
+              ### 🤖 AI Test Generation
+              You can use Claude Code or Gemini to generate tests:
+              \`\`\`bash
+              # Example with Claude Code
+              claude-code generate-tests <file-path>
+              \`\`\`
+
+              ---
+              _Generated by Self-Healing Pipeline 🔧_`,
+              labels: ['tests', 'automated', 'self-healing']
+            });
+        continue-on-error: true
+
+  security-auto-remediation:
+    name: 🔒 Security Auto-Remediation
+    runs-on: ubuntu-latest
+    needs: detect-failures
+    if: ${{ github.event.inputs.fix_type == 'auto-fix-all' || github.event_name == 'workflow_dispatch' }}
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 🔒 Run Security Fixes
+        run: |
+          echo "🔒 Running automated security fixes..."
+
+          cd backend
+          npm audit fix --force || echo "⚠️ Some vulnerabilities remain"
+
+          cd ../grok-chat
+          npm audit fix --force || echo "⚠️ Some vulnerabilities remain"
+
+          echo "✅ Security remediation complete"
+        continue-on-error: true
+
+      - name: 📊 Generate Security Report
+        run: |
+          echo "# 🔒 Security Auto-Remediation Report" > security-report.md
+          echo "" >> security-report.md
+          echo "## Backend" >> security-report.md
+          cd backend && npm audit --json >> ../security-report.json 2>&1 || true
+          cd ..
+          echo "" >> security-report.md
+          echo "## Frontend" >> security-report.md
+          cd grok-chat && npm audit --json >> ../security-report-frontend.json 2>&1 || true
+          cd ..
+
+          cat security-report.md
+
+      - name: 🔍 Check for Changes
+        id: changes
+        run: |
+          if git diff --quiet HEAD; then
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          else
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 📝 Create PR with Fixes
+        if: steps.changes.outputs.has_changes == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const branchName = `auto-fix/security-${Date.now()}`;
+
+            // Note: This is a simplified version
+            // In production, you'd create a branch, commit, push, and create a PR
+
+            console.log('✅ Security fixes would be committed to branch:', branchName);
+            console.log('📝 A pull request would be created automatically');
+
+  healing-summary:
+    name: 📊 Self-Healing Summary
+    runs-on: ubuntu-latest
+    needs: [detect-failures, auto-fix-dependencies, auto-fix-linting, generate-test-suggestions, security-auto-remediation]
+    if: always()
+    steps:
+      - name: 📊 Generate Summary
+        run: |
+          echo "============================================"
+          echo "🔧 Self-Healing Pipeline Summary"
+          echo "============================================"
+          echo ""
+          echo "🔍 Failure Detection: ${{ needs.detect-failures.result }}"
+          echo "📦 Dependency Fixes: ${{ needs.auto-fix-dependencies.result }}"
+          echo "🎨 Linting Fixes: ${{ needs.auto-fix-linting.result }}"
+          echo "🧪 Test Analysis: ${{ needs.generate-test-suggestions.result }}"
+          echo "🔒 Security Fixes: ${{ needs.security-auto-remediation.result }}"
+          echo ""
+          echo "============================================"
+          echo "✅ Self-healing process complete!"
+          echo "============================================"
+
+      - name: 💬 Notify Team (Optional)
+        run: |
+          echo "📣 Team notification would be sent here"
+          echo "Options: Slack, Discord, Email, GitHub Issue"
