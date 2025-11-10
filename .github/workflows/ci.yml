@@ -130,6 +130,7 @@ jobs:
         working-directory: ./backend
         run: |
           echo "Running npm audit..."
+          # npm audit exits 0 when no vulnerabilities found, non-zero when vulnerabilities exist
           npm audit --audit-level=moderate > ../backend-audit.txt 2>&1 && {
             echo "audit_failed=false" >> $GITHUB_OUTPUT
           } || {
@@ -142,6 +143,7 @@ jobs:
         working-directory: ./grok-chat
         run: |
           echo "Running npm audit..."
+          # npm audit exits 0 when no vulnerabilities found, non-zero when vulnerabilities exist
           npm audit --audit-level=moderate > ../frontend-audit.txt 2>&1 && {
             echo "audit_failed=false" >> $GITHUB_OUTPUT
           } || {
