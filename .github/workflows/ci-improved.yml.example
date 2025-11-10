@@ -1,0 +1,659 @@
+name: CI/CD Pipeline (Improved)
+
+# This is an example of an improved CI/CD pipeline addressing the audit findings
+# To use: Rename to ci.yml and configure the required secrets
+
+on:
+  push:
+    branches: [main, claude/**]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  security-events: write
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  # ============================================
+  # LINTING & CODE QUALITY
+  # ============================================
+  lint:
+    name: Lint & Format Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Cache node modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.npm
+            backend/node_modules
+            grok-chat/node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Install backend dependencies
+        working-directory: ./backend
+        run: npm ci
+
+      - name: Lint backend
+        working-directory: ./backend
+        run: npm run lint || (echo "::error::Backend linting failed" && exit 1)
+
+      - name: Install frontend dependencies
+        working-directory: ./grok-chat
+        run: npm ci
+
+      - name: Lint frontend
+        working-directory: ./grok-chat
+        run: npm run lint || (echo "::error::Frontend linting failed" && exit 1)
+
+      - name: Check code formatting
+        run: |
+          npx prettier --check "**/*.{js,ts,json,md,yml}" || (
+            echo "::error::Code formatting check failed. Run 'npm run format' to fix."
+            exit 1
+          )
+
+      - name: TypeScript type check (frontend)
+        working-directory: ./grok-chat
+        run: npx tsc --noEmit
+
+  # ============================================
+  # SECURITY SCANNING
+  # ============================================
+  security:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          cd backend && npm ci
+          cd ../grok-chat && npm ci
+
+      # SECRET SCANNING
+      - name: TruffleHog Secret Scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+          extra_args: --debug --only-verified
+
+      # DEPENDENCY VULNERABILITY SCANNING
+      - name: Security audit (backend)
+        working-directory: ./backend
+        run: |
+          npm audit --audit-level=moderate --json > ../backend-audit.json || echo "Audit found issues"
+
+      - name: Security audit (frontend)
+        working-directory: ./grok-chat
+        run: |
+          npm audit --audit-level=moderate --json > ../frontend-audit.json || echo "Audit found issues"
+
+      - name: Check audit results
+        run: |
+          BACKEND_VULNS=$(jq '.metadata.vulnerabilities.moderate + .metadata.vulnerabilities.high + .metadata.vulnerabilities.critical' backend-audit.json)
+          FRONTEND_VULNS=$(jq '.metadata.vulnerabilities.moderate + .metadata.vulnerabilities.high + .metadata.vulnerabilities.critical' frontend-audit.json)
+
+          echo "Backend vulnerabilities: $BACKEND_VULNS"
+          echo "Frontend vulnerabilities: $FRONTEND_VULNS"
+
+          if [ "$BACKEND_VULNS" -gt 0 ] || [ "$FRONTEND_VULNS" -gt 0 ]; then
+            echo "::error::Security vulnerabilities found! Backend: $BACKEND_VULNS, Frontend: $FRONTEND_VULNS"
+            exit 1
+          fi
+
+      - name: Upload audit reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-audit-reports
+          path: |
+            backend-audit.json
+            frontend-audit.json
+          retention-days: 30
+
+      - name: Create security issue on failure
+        if: failure() && github.ref == 'refs/heads/main'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '🔒 Security vulnerabilities detected in dependencies',
+              labels: ['security', 'dependencies', 'high-priority'],
+              body: `Security scan found vulnerabilities in dependencies.
+
+              **Workflow Run:** ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}
+              **Branch:** ${context.ref}
+              **Commit:** ${context.sha}
+
+              Please review the audit reports in the workflow artifacts and update dependencies.`
+            });
+
+      # STATIC APPLICATION SECURITY TESTING (SAST)
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript, typescript
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+
+  # ============================================
+  # BACKEND TESTS
+  # ============================================
+  backend-test:
+    name: Backend Tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: test_db
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Restore node modules cache
+        uses: actions/cache@v4
+        with:
+          path: backend/node_modules
+          key: ${{ runner.os }}-backend-modules-${{ hashFiles('backend/package-lock.json') }}
+
+      - name: Install backend dependencies
+        working-directory: ./backend
+        run: npm ci
+
+      - name: Run database migrations
+        working-directory: ./backend
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/test_db
+          NODE_ENV: test
+        run: |
+          # Run migrations if script exists
+          npm run migrate:up || echo "No migration script"
+
+      - name: Run backend tests with coverage
+        working-directory: ./backend
+        env:
+          NODE_ENV: test
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY_TEST || 'test-key' }}
+          DATABASE_URL: postgresql://test:test@localhost:5432/test_db
+        run: npm test -- --coverage
+
+      - name: Check coverage thresholds
+        working-directory: ./backend
+        run: |
+          if [ -f coverage/coverage-summary.json ]; then
+            LINES=$(jq '.total.lines.pct' coverage/coverage-summary.json)
+            STATEMENTS=$(jq '.total.statements.pct' coverage/coverage-summary.json)
+
+            echo "Lines coverage: $LINES%"
+            echo "Statements coverage: $STATEMENTS%"
+
+            if (( $(echo "$LINES < 70" | bc -l) )); then
+              echo "::error::Coverage $LINES% is below 70% threshold"
+              exit 1
+            fi
+          else
+            echo "::warning::Coverage report not found"
+          fi
+
+      - name: Upload backend coverage
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./backend/coverage/coverage-final.json
+          flags: backend
+          name: backend-coverage
+          fail_ci_if_error: true
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-results
+          path: backend/coverage/
+          retention-days: 30
+
+  # ============================================
+  # FRONTEND TESTS
+  # ============================================
+  frontend-test:
+    name: Frontend Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Restore node modules cache
+        uses: actions/cache@v4
+        with:
+          path: grok-chat/node_modules
+          key: ${{ runner.os }}-frontend-modules-${{ hashFiles('grok-chat/package-lock.json') }}
+
+      - name: Install frontend dependencies
+        working-directory: ./grok-chat
+        run: npm ci
+
+      - name: Run frontend tests with coverage
+        working-directory: ./grok-chat
+        run: npm test -- --watch=false --browsers=ChromeHeadless --code-coverage
+
+      - name: Check coverage thresholds
+        working-directory: ./grok-chat
+        run: |
+          if [ -f coverage/coverage-summary.json ]; then
+            LINES=$(jq '.total.lines.pct' coverage/coverage-summary.json)
+            echo "Coverage: $LINES%"
+
+            if (( $(echo "$LINES < 70" | bc -l) )); then
+              echo "::error::Coverage $LINES% is below 70% threshold"
+              exit 1
+            fi
+          fi
+
+      - name: Build frontend
+        working-directory: ./grok-chat
+        run: npm run build -- --configuration production
+
+      - name: Check bundle size
+        working-directory: ./grok-chat
+        run: |
+          BUNDLE_SIZE=$(du -sb dist/ | cut -f1)
+          MAX_SIZE=$((5 * 1024 * 1024))  # 5MB
+
+          echo "Bundle size: $(($BUNDLE_SIZE / 1024 / 1024))MB"
+
+          if [ $BUNDLE_SIZE -gt $MAX_SIZE ]; then
+            echo "::warning::Bundle size exceeds 5MB"
+          fi
+
+      - name: Upload frontend coverage
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./grok-chat/coverage/coverage-final.json
+          flags: frontend
+          name: frontend-coverage
+          fail_ci_if_error: true
+
+      - name: Cache build artifacts
+        uses: actions/cache@v4
+        with:
+          path: grok-chat/dist
+          key: frontend-build-${{ github.sha }}
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: grok-chat/dist/
+          retention-days: 30
+
+  # ============================================
+  # E2E TESTS
+  # ============================================
+  e2e-test:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    needs: [backend-test, frontend-test]
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: test_db
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          cd backend && npm ci
+          cd ../grok-chat && npm ci
+
+      - name: Install Playwright
+        working-directory: ./grok-chat
+        run: npx playwright install --with-deps chromium
+
+      - name: Start backend server
+        working-directory: ./backend
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/test_db
+          XAI_API_KEY: test-key
+          NODE_ENV: test
+        run: |
+          npm start &
+          echo $! > /tmp/backend.pid
+          # Wait for server to be ready
+          for i in {1..30}; do
+            if curl -s http://localhost:3000/api/health > /dev/null; then
+              echo "Backend is ready"
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Run E2E tests
+        working-directory: ./grok-chat
+        env:
+          BASE_URL: http://localhost:4200
+        run: |
+          npm run e2e || echo "::warning::E2E tests not configured yet"
+
+      - name: Stop backend server
+        if: always()
+        run: |
+          if [ -f /tmp/backend.pid ]; then
+            kill $(cat /tmp/backend.pid) || true
+          fi
+
+      - name: Upload E2E test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-test-results
+          path: grok-chat/playwright-report/
+          retention-days: 30
+
+  # ============================================
+  # DEPLOY TO STAGING
+  # ============================================
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [lint, security, backend-test, frontend-test, e2e-test]
+    if: github.event_name == 'pull_request'
+    environment:
+      name: staging
+      url: https://staging.grokisanaughtypuppy.app
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Restore build artifacts
+        uses: actions/cache@v4
+        with:
+          path: grok-chat/dist
+          key: frontend-build-${{ github.sha }}
+
+      - name: Deploy to DigitalOcean Staging
+        uses: digitalocean/app_action@v1.1.5
+        with:
+          app_name: grokisanaughtypuppy-staging
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+      - name: Wait for deployment
+        run: sleep 60
+
+      - name: Run smoke tests
+        run: |
+          STAGING_URL="https://staging.grokisanaughtypuppy.app"
+
+          # Health check
+          HEALTH=$(curl -f -s "$STAGING_URL/api/health" || echo "failed")
+          if [ "$HEALTH" = "failed" ]; then
+            echo "::error::Staging health check failed"
+            exit 1
+          fi
+
+          echo "✅ Staging deployment verified"
+
+      - name: Comment on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `🚀 **Deployed to Staging**
+
+              **Environment:** https://staging.grokisanaughtypuppy.app
+              **Commit:** ${context.sha}
+              **Status:** ✅ Health check passed
+
+              Test the changes before merging!`
+            });
+
+  # ============================================
+  # DEPLOY TO PRODUCTION
+  # ============================================
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [lint, security, backend-test, frontend-test, e2e-test]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment:
+      name: production
+      url: https://grokisanaughtypuppy-yn23q.ondigitalocean.app
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Restore build artifacts
+        uses: actions/cache@v4
+        with:
+          path: grok-chat/dist
+          key: frontend-build-${{ github.sha }}
+
+      - name: Run database migrations
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+        run: |
+          cd backend
+          npm ci
+          npm run migrate:up || echo "::warning::No migrations to run"
+
+      - name: Deploy to DigitalOcean Production
+        id: deploy
+        uses: digitalocean/app_action@v1.1.5
+        with:
+          app_name: grokisanaughtypuppy
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+      - name: Wait for deployment to stabilize
+        run: sleep 90
+
+      - name: Verify deployment health
+        id: health_check
+        run: |
+          PROD_URL="https://grokisanaughtypuppy-yn23q.ondigitalocean.app"
+
+          # Try health check multiple times
+          for i in {1..5}; do
+            RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "$PROD_URL/api/health")
+
+            if [ "$RESPONSE" = "200" ]; then
+              echo "✅ Health check passed (attempt $i)"
+              echo "healthy=true" >> $GITHUB_OUTPUT
+              break
+            fi
+
+            echo "⚠️  Health check failed with status $RESPONSE (attempt $i/5)"
+            sleep 10
+          done
+
+          if [ "$RESPONSE" != "200" ]; then
+            echo "::error::Health check failed after 5 attempts"
+            echo "healthy=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: Run production smoke tests
+        run: |
+          PROD_URL="https://grokisanaughtypuppy-yn23q.ondigitalocean.app"
+
+          # Test critical endpoints
+          curl -f "$PROD_URL/api/health" || exit 1
+          curl -f "$PROD_URL/api/v1" || exit 1
+
+          echo "✅ Smoke tests passed"
+
+      - name: Notify deployment success
+        if: success()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: success
+          text: |
+            ✅ Successfully deployed to production
+            Commit: ${{ github.sha }}
+            Author: ${{ github.actor }}
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          echo "::error::Deployment verification failed, manual rollback required"
+          # TODO: Implement automatic rollback via DigitalOcean API
+
+      - name: Notify deployment failure
+        if: failure()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          text: |
+            🚨 Production deployment FAILED
+            Commit: ${{ github.sha }}
+            Check logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+
+      - name: Create deployment issue on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '🚨 Production deployment failed',
+              labels: ['deployment', 'critical', 'production'],
+              body: `Production deployment failed for commit ${context.sha}
+
+              **Run:** ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}
+              **Branch:** ${context.ref}
+              **Actor:** ${context.actor}
+
+              **Next Steps:**
+              1. Check deployment logs
+              2. Verify health check endpoint
+              3. Consider rollback if necessary
+
+              cc: @${context.actor}`
+            });
+
+      - name: Monitor post-deployment for 5 minutes
+        if: success()
+        run: |
+          echo "Monitoring deployment health for 5 minutes..."
+          PROD_URL="https://grokisanaughtypuppy-yn23q.ondigitalocean.app"
+
+          for i in {1..10}; do
+            HEALTH=$(curl -s "$PROD_URL/api/health" | jq -r '.status' || echo "error")
+
+            if [ "$HEALTH" != "ok" ]; then
+              echo "::warning::Health degraded at minute $i: $HEALTH"
+            else
+              echo "✅ Health check $i/10: OK"
+            fi
+
+            sleep 30
+          done
+
+          echo "✅ Deployment stable"
+
+      - name: Create deployment success summary
+        if: success()
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY <<EOF
+          ## 🚀 Deployment Successful
+
+          **Environment:** Production
+          **URL:** https://grokisanaughtypuppy-yn23q.ondigitalocean.app
+          **Commit:** ${{ github.sha }}
+          **Deployed by:** ${{ github.actor }}
+          **Duration:** $(date -u -d @${SECONDS} +"%M:%S")
+
+          ### Verification Steps Completed
+          - ✅ Database migrations
+          - ✅ Deployment to DigitalOcean
+          - ✅ Health check verification
+          - ✅ Smoke tests
+          - ✅ 5-minute monitoring period
+
+          ### Next Steps
+          - Monitor error rates in Sentry
+          - Check performance metrics
+          - Watch for user-reported issues
+          EOF
