@@ -71,7 +71,7 @@ A complete example of an industry-standard CI/CD pipeline.
 2. Click **Run workflow**
 3. Set `dry_run` to `true` (preview mode)
 4. Review the output
-5. Run again with `dry_run` to `false` to create issues
+5. Run again with `dry_run` set to `false` to create issues
 
 ### Step 2: Try Review-to-Issue Feature
 

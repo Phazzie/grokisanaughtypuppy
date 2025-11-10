@@ -84,23 +84,6 @@ jobs:
           chmod +x create-github-issues.sh
           ./create-github-issues.sh
 
-      - name: Comment on PR if triggered by push
-        if: |
-          steps.check_file.outputs.exists == 'true' &&
-          github.event_name == 'push' &&
-          github.event.pull_request != null
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          ISSUE_COUNT=$(grep -c "^### Issue" ISSUES_TO_CREATE.md || echo "0")
-          gh pr comment ${{ github.event.pull_request.number }} --body "📋 **Issue Creation Available**
-
-This PR includes an analysis with $ISSUE_COUNT issues ready to be created.
-
-To create these issues, go to Actions → Auto-Create Issues from Analysis → Run workflow and set dry_run to false.
-
-Preview the issues in: [ISSUES_TO_CREATE.md](../blob/${{ github.sha }}/ISSUES_TO_CREATE.md)"
-
       - name: Create workflow summary
         if: steps.check_file.outputs.exists == 'true'
         run: |

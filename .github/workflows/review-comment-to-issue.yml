@@ -57,11 +57,11 @@ jobs:
           COMMENT_URL: ${{ github.event.comment.html_url || github.event.review.html_url }}
         run: |
           # Extract title (first line after [issue] or [create-issue])
-          TITLE=$(echo "$COMMENT_BODY" | grep -A 1 '\[issue\]\|\[create-issue\]' | tail -1 | sed 's/^[#* ]*//' | head -c 100)
+          TITLE=$(echo "$COMMENT_BODY" | grep -A 1 '\[issue\]\|\[create-issue\]' | tail -1 | sed 's/^[#* ]*//' | cut -c1-100)
 
           # If no explicit title, use first line of comment
           if [ -z "$TITLE" ]; then
-            TITLE=$(echo "$COMMENT_BODY" | head -1 | sed 's/^[#* ]*//' | head -c 100)
+            TITLE=$(echo "$COMMENT_BODY" | head -1 | sed 's/^[#* ]*//' | cut -c1-100)
           fi
 
           # Extract labels if specified (format: [labels: bug, enhancement])
@@ -94,21 +94,21 @@ jobs:
           echo "comment_url=$COMMENT_URL" >> $GITHUB_OUTPUT
 
           # Save full body for issue description
-          cat > /tmp/issue_body.md <<EOF
-          ## From PR Review Comment
-
-          **Raised by:** @$COMMENT_USER
-          **In PR:** #$PR_NUMBER
-          **Comment:** $COMMENT_URL
-
-          ---
-
-          $COMMENT_BODY
-
-          ---
-
-          *This issue was automatically created from a PR review comment.*
-          EOF
+          {
+            echo "## From PR Review Comment"
+            echo ""
+            echo "**Raised by:** @$COMMENT_USER"
+            echo "**In PR:** #$PR_NUMBER"
+            echo "**Comment:** $COMMENT_URL"
+            echo ""
+            echo "---"
+            echo ""
+            echo "$COMMENT_BODY"
+            echo ""
+            echo "---"
+            echo ""
+            echo "*This issue was automatically created from a PR review comment.*"
+          } > /tmp/issue_body.md
 
       - name: Create GitHub Issue
         id: create_issue
