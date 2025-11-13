@@ -2,9 +2,10 @@ name: 🔧 Self-Healing Pipeline
 
 on:
   workflow_run:
+    # NOTE: This workflow is tightly coupled to the workflow name below.
+    # If you rename the referenced workflow, update this value accordingly.
     workflows: ["🤖 AI-Powered CI/CD Pipeline"]
     types: [completed]
-    branches: [main, develop]
   workflow_dispatch:
     inputs:
       fix_type:
