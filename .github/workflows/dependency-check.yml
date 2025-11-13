@@ -1,0 +1,64 @@
+name: 🔒 Security & Dependency Check
+
+on:
+  schedule:
+    # Run weekly on Monday at 9 AM UTC
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-dependencies:
+    name: 🔍 Check for Outdated & Vulnerable Dependencies
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 🔒 Backend Security Audit
+        working-directory: backend
+        run: |
+          echo "🔒 Running npm audit for backend..."
+          npm audit --production || echo "⚠️ Vulnerabilities found in backend dependencies"
+        continue-on-error: true
+
+      - name: 🔒 Frontend Security Audit
+        working-directory: grok-chat
+        run: |
+          echo "🔒 Running npm audit for frontend..."
+          npm audit --production || echo "⚠️ Vulnerabilities found in frontend dependencies"
+        continue-on-error: true
+
+      - name: 📊 Check Outdated Packages (Backend)
+        working-directory: backend
+        run: |
+          echo "📊 Checking for outdated backend packages..."
+          npm outdated || echo "Some packages are outdated"
+        continue-on-error: true
+
+      - name: 📊 Check Outdated Packages (Frontend)
+        working-directory: grok-chat
+        run: |
+          echo "📊 Checking for outdated frontend packages..."
+          npm outdated || echo "Some packages are outdated"
+        continue-on-error: true
+
+      - name: 📝 Summary
+        run: |
+          echo "✅ Dependency check complete!"
+          echo ""
+          echo "Review the output above for:"
+          echo "  - Security vulnerabilities (npm audit)"
+          echo "  - Outdated packages (npm outdated)"
+          echo ""
+          echo "To fix vulnerabilities, run:"
+          echo "  cd backend && npm audit fix"
+          echo "  cd grok-chat && npm audit fix"
