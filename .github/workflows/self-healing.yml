@@ -269,10 +269,10 @@ jobs:
           echo "🔒 Running automated security fixes..."
 
           cd backend
-          npm audit fix --force || echo "⚠️ Some vulnerabilities remain"
+          npm audit fix || echo "⚠️ Some vulnerabilities remain"
 
           cd ../grok-chat
-          npm audit fix --force || echo "⚠️ Some vulnerabilities remain"
+          npm audit fix || echo "⚠️ Some vulnerabilities remain"
 
           echo "✅ Security remediation complete"
         continue-on-error: true
