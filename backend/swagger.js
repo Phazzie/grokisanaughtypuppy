@@ -10,7 +10,7 @@ const options = {
     info: {
       title: 'Grok Chat API',
       version: '1.0.0',
-      description: 'API documentation for the Grok Chat application - A powerful conversational AI interface powered by grok-2-1212',
+      description: 'API documentation for the Grok Chat application - A powerful conversational AI interface powered by grok-4-fast-reasoning',
       contact: {
         name: 'API Support',
         url: 'https://github.com/yourusername/grok-chat',

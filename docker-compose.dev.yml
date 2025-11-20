@@ -30,7 +30,7 @@ services:
       NODE_ENV: development
       PORT: 3000
       XAI_API_KEY: ${XAI_API_KEY}
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/grok_chat
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/grok_chat
       ALLOWED_ORIGINS: http://localhost:4200,http://localhost:3000
       DB_POOL_MAX: 20
       DB_POOL_MIN: 2
